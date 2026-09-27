@@ -50,6 +50,10 @@ class AgentSentryStack(Stack):
         )
 
         # --- DynamoDB: the monitored ("victim") table for the demo scenario ---
+        # Provisioned with deliberately low capacity (1 WCU) so a real write
+        # burst genuinely throttles and fires the CloudWatch alarm — this is
+        # what drives a real, self-generated incident end to end. Free-tier safe
+        # (free tier covers 25 WCU/RCU).
         monitored_table = dynamodb.Table(
             self,
             "MonitoredTable",
@@ -57,7 +61,9 @@ class AgentSentryStack(Stack):
             partition_key=dynamodb.Attribute(
                 name="pk", type=dynamodb.AttributeType.STRING
             ),
-            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            billing_mode=dynamodb.BillingMode.PROVISIONED,
+            read_capacity=1,
+            write_capacity=1,
             removal_policy=RemovalPolicy.DESTROY,
         )
 
@@ -99,6 +105,9 @@ class AgentSentryStack(Stack):
             environment=common_env,
         )
         incident_table.grant_read_write_data(api_fn)
+        # The API Lambda runs the verification endpoint, which re-checks the
+        # live CloudWatch metric — grant it the read-only CloudWatch policy.
+        api_fn.add_to_role_policy(_cloudwatch_read_policy())
 
         # --- Incident Lambda: invoked by EventBridge on alarm, writes PENDING ---
         incident_fn = lambda_.Function(
@@ -109,10 +118,14 @@ class AgentSentryStack(Stack):
             handler="lambda_incident.handler",
             code=code,
             memory_size=128,
-            timeout=Duration.seconds(30),
+            timeout=Duration.seconds(60),
             environment=common_env,
         )
         incident_table.grant_read_write_data(incident_fn)
+        # Needs to inspect the monitored table + read CloudWatch metrics (read-only).
+        monitored_table.grant_read_data(incident_fn)
+        incident_fn.add_to_role_policy(_dynamodb_describe_policy(monitored_table.table_arn))
+        incident_fn.add_to_role_policy(_cloudwatch_read_policy())
 
         # --- Verification Lambda: re-checks the metric post-deploy ---
         verify_fn = lambda_.Function(
@@ -273,6 +286,15 @@ def _bundling_options():
     )
 
 
+def _dynamodb_describe_policy(table_arn: str):
+    from aws_cdk import aws_iam as iam
+
+    return iam.PolicyStatement(
+        actions=["dynamodb:DescribeTable"],
+        resources=[table_arn],
+    )
+
+
 def _cloudwatch_read_policy():
     from aws_cdk import aws_iam as iam
 
@@ -285,6 +307,8 @@ def _cloudwatch_read_policy():
         ],
         resources=["*"],
     )
+    # (GetMetricStatistics is included above; the API Lambda runs the
+    #  verification loop, so it also needs this policy — granted below.)
 
 
 def _cloudtrail_read_policy():

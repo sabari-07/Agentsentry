@@ -10,6 +10,7 @@ from functools import lru_cache
 from app.services import (
     CloudTrailService,
     CloudWatchService,
+    DiagnosisService,
     GitHubService,
     IncidentStore,
     VerificationService,
@@ -26,6 +27,7 @@ class Container:
         self.cloudwatch = CloudWatchService(settings)
         self.cloudtrail = CloudTrailService(settings)
         self.github = GitHubService(settings)
+        self.diagnosis = DiagnosisService(settings, self.cloudwatch)
         self.verification = VerificationService(settings, self.incident_store, self.cloudwatch)
 
 

@@ -67,3 +67,21 @@ class CloudWatchService:
         if not datapoints:
             return 0.0
         return max(dp["Maximum"] for dp in datapoints)
+
+    def sum_metric(self, namespace: str, metric_name: str, dimensions: dict, minutes: int) -> float:
+        """Return the summed value of a metric over the last ``minutes`` (read-only)."""
+        if self._settings.use_mock_data or self._client is None:
+            return 0.0
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(minutes=minutes)
+        resp = self._client.get_metric_statistics(
+            Namespace=namespace,
+            MetricName=metric_name,
+            Dimensions=[{"Name": k, "Value": v} for k, v in dimensions.items()],
+            StartTime=start,
+            EndTime=end,
+            Period=60,
+            Statistics=["Sum"],
+        )
+        pts = resp.get("Datapoints", [])
+        return sum(p["Sum"] for p in pts) if pts else 0.0

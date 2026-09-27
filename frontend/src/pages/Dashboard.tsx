@@ -8,6 +8,7 @@ import {
   IconAlert,
   IconCheck,
   IconClock,
+  IconDollar,
   IconLogo,
   IconPR,
   IconShield,
@@ -16,15 +17,38 @@ import type { Incident } from "../types/incident";
 import { money } from "../utils/format";
 
 type Health = { status: string; mode: string; region: string };
-type View = "all" | "incidents" | "prs" | "verifications" | "audit";
+type View = "overview" | "incidents" | "prs" | "verifications" | "audit";
 
-const NAV: { id: View; label: string; group: string }[] = [
-  { id: "all", label: "Overview", group: "Operations" },
-  { id: "incidents", label: "Incidents", group: "Operations" },
-  { id: "prs", label: "Pull requests", group: "Operations" },
-  { id: "verifications", label: "Verifications", group: "Operations" },
-  { id: "audit", label: "Read-only audit", group: "Governance" },
+const NAV: { id: View; label: string; group: string; icon: JSX.Element }[] = [
+  { id: "overview", label: "Overview", group: "Operations", icon: <IconActivity size={16} /> },
+  { id: "incidents", label: "Incidents", group: "Operations", icon: <IconAlert size={16} /> },
+  { id: "prs", label: "Pull requests", group: "Operations", icon: <IconPR size={16} /> },
+  { id: "verifications", label: "Verifications", group: "Operations", icon: <IconCheck size={16} /> },
+  { id: "audit", label: "Read-only audit", group: "Governance", icon: <IconShield size={16} /> },
 ];
+
+const TITLES: Record<View, { title: string; sub: string }> = {
+  overview: {
+    title: "Overview",
+    sub: "Live snapshot of autonomous detection, reviewable remediation, and verified fixes.",
+  },
+  incidents: {
+    title: "Incidents",
+    sub: "Every detected infrastructure incident and its current diagnosis state.",
+  },
+  prs: {
+    title: "Pull Requests",
+    sub: "Merge-ready Infrastructure-as-Code remediations with cost delta, diff, and rollback.",
+  },
+  verifications: {
+    title: "Verifications",
+    sub: "Fixes confirmed by re-checking the live metric after deploy — proof, not claims.",
+  },
+  audit: {
+    title: "Read-only Audit",
+    sub: "CloudTrail evidence that every agent action was read-only (Describe / Get / List).",
+  },
+};
 
 export function Dashboard() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -32,7 +56,7 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
-  const [view, setView] = useState<View>("all");
+  const [view, setView] = useState<View>("overview");
 
   const load = useCallback(async () => {
     try {
@@ -80,14 +104,7 @@ export function Dashboard() {
     return c ? sum + (c.after_monthly_usd - c.before_monthly_usd) : sum;
   }, 0);
 
-  // Which columns to show for the selected view.
-  const show = {
-    incidents: view === "all" || view === "incidents",
-    prs: view === "all" || view === "prs",
-    resolved: view === "all" || view === "verifications",
-    audit: view === "audit",
-  };
-
+  const meta = TITLES[view];
   const groups = [...new Set(NAV.map((n) => n.group))];
 
   return (
@@ -95,7 +112,7 @@ export function Dashboard() {
       <aside className="sidebar">
         <div className="brand">
           <div className="brand__logo">
-            <IconLogo size={22} />
+            <IconLogo size={23} />
           </div>
           <div>
             <div className="brand__name">AgentSentry AI</div>
@@ -104,9 +121,9 @@ export function Dashboard() {
         </div>
 
         <nav className="nav">
-          {groups.map((g) => (
+          {groups.map((g, gi) => (
             <div key={g}>
-              <div className="nav__label" style={{ marginTop: g === groups[0] ? 0 : 18 }}>
+              <div className="nav__label" style={{ marginTop: gi === 0 ? 0 : 20 }}>
                 {g}
               </div>
               {NAV.filter((n) => n.group === g).map((n) => (
@@ -115,7 +132,8 @@ export function Dashboard() {
                   className={`nav__item ${view === n.id ? "nav__item--active" : ""}`}
                   onClick={() => setView(n.id)}
                 >
-                  <span className="nav__dot" /> {n.label}
+                  <span className="nav__ic">{n.icon}</span>
+                  {n.label}
                 </button>
               ))}
             </div>
@@ -126,15 +144,8 @@ export function Dashboard() {
       <main className="main">
         <div className="topbar">
           <div>
-            <h1 className="topbar__title">
-              {view === "all"
-                ? "Incident Operations"
-                : NAV.find((n) => n.id === view)?.label}
-            </h1>
-            <p className="topbar__subtitle">
-              Autonomous detection, reviewable Infrastructure-as-Code remediation, and post-deploy
-              verification — every fix proven, every agent call read-only.
-            </p>
+            <h1 className="topbar__title">{meta.title}</h1>
+            <p className="topbar__subtitle">{meta.sub}</p>
           </div>
           <div className="topbar__meta">
             {health && (
@@ -155,175 +166,248 @@ export function Dashboard() {
           </div>
         )}
 
-        {/* KPI stats — clickable to filter the board */}
-        <div className="stats">
-          <button
-            className="stat"
-            style={{ ["--accent" as string]: "var(--red)" }}
-            onClick={() => setView("incidents")}
-          >
-            <div className="stat__label">
-              <IconActivity size={13} /> Active incidents
+        {/* ---------------- OVERVIEW ---------------- */}
+        {view === "overview" && (
+          <>
+            <div className="stats">
+              <StatCard
+                icon={<IconAlert size={17} />}
+                tint="var(--red)"
+                bg="var(--red-dim)"
+                value={active.length}
+                label="Active incidents"
+                hint="detecting & diagnosing"
+                onClick={() => setView("incidents")}
+              />
+              <StatCard
+                icon={<IconPR size={17} />}
+                tint="var(--amber)"
+                bg="var(--amber-dim)"
+                value={openPrs.length}
+                label="Awaiting review"
+                hint="remediation PRs open"
+                onClick={() => setView("prs")}
+              />
+              <StatCard
+                icon={<IconCheck size={17} />}
+                tint="var(--green)"
+                bg="var(--green-dim)"
+                value={resolved.length}
+                label="Verified fixes"
+                hint="metric confirmed healthy"
+                onClick={() => setView("verifications")}
+              />
+              <StatCard
+                icon={<IconDollar size={17} />}
+                tint="var(--brand)"
+                bg="rgba(124,157,255,0.14)"
+                value={money(savings)}
+                label="Cost impact / mo"
+                hint="across proposed fixes"
+                onClick={() => setView("prs")}
+              />
             </div>
-            <div className="stat__value">{active.length}</div>
-            <div className="stat__hint">detecting &amp; diagnosing</div>
-          </button>
-          <button
-            className="stat"
-            style={{ ["--accent" as string]: "var(--amber)" }}
-            onClick={() => setView("prs")}
-          >
-            <div className="stat__label">
-              <IconPR size={13} /> Awaiting review
-            </div>
-            <div className="stat__value">{openPrs.length}</div>
-            <div className="stat__hint">remediation PRs open</div>
-          </button>
-          <button
-            className="stat"
-            style={{ ["--accent" as string]: "var(--green)" }}
-            onClick={() => setView("verifications")}
-          >
-            <div className="stat__label">
-              <IconCheck size={13} /> Verified fixes
-            </div>
-            <div className="stat__value">{resolved.length}</div>
-            <div className="stat__hint">metric confirmed healthy</div>
-          </button>
-          <button
-            className="stat"
-            style={{ ["--accent" as string]: "var(--brand)" }}
-            onClick={() => setView("audit")}
-          >
-            <div className="stat__label">
-              <IconShield size={13} /> Cost impact / mo
-            </div>
-            <div className="stat__value">{money(savings)}</div>
-            <div className="stat__hint">across proposed fixes</div>
-          </button>
-        </div>
 
-        {/* Audit view: flat list of incidents with their read-only audit trails */}
-        {show.audit && (
-          <section className="column" style={{ maxWidth: 720 }}>
-            <div className="column__head">
-              <span
-                className="column__icon"
-                style={{ background: "rgba(91,140,255,0.15)", color: "var(--brand)" }}
+            <div className="overview-grid">
+              <PreviewPanel
+                icon={<IconAlert size={15} />}
+                tint="var(--red)"
+                bg="var(--red-dim)"
+                title="Latest Incident"
+                count={active.length}
+                onMore={() => setView("incidents")}
+                empty="No active incidents"
+                loading={loading}
               >
-                <IconShield size={14} />
-              </span>
-              <span className="column__title">Read-only Audit Trail</span>
-              <span className="column__count">{withAudit.length}</span>
+                {active[0] && <IncidentCard incident={active[0]} />}
+              </PreviewPanel>
+
+              <PreviewPanel
+                icon={<IconPR size={15} />}
+                tint="var(--amber)"
+                bg="var(--amber-dim)"
+                title="Latest Pull Request"
+                count={openPrs.length}
+                onMore={() => setView("prs")}
+                empty="No remediation PRs open"
+                loading={loading}
+              >
+                {openPrs[0] && (
+                  <PullRequestCard
+                    incident={openPrs[0]}
+                    onVerify={handleVerify}
+                    verifying={verifyingId === openPrs[0].id}
+                  />
+                )}
+              </PreviewPanel>
+
+              <PreviewPanel
+                icon={<IconCheck size={15} />}
+                tint="var(--green)"
+                bg="var(--green-dim)"
+                title="Latest Verified Fix"
+                count={resolved.length}
+                onMore={() => setView("verifications")}
+                empty="No verified resolutions yet"
+                loading={loading}
+              >
+                {resolved[0] && <ResolvedCard incident={resolved[0]} />}
+              </PreviewPanel>
             </div>
-            {loading && <div className="skeleton skeleton-card" />}
-            {!loading && withAudit.length === 0 && (
-              <div className="empty">No audited agent activity yet</div>
-            )}
-            {withAudit.map((inc) =>
-              inc.status === "RESOLVED_VERIFIED" ? (
-                <ResolvedCard key={inc.id} incident={inc} />
-              ) : inc.pull_request ? (
-                <PullRequestCard
-                  key={inc.id}
-                  incident={inc}
-                  onVerify={handleVerify}
-                  verifying={verifyingId === inc.id}
-                />
-              ) : (
-                <IncidentCard key={inc.id} incident={inc} />
-              )
-            )}
-          </section>
+          </>
         )}
 
-        {/* Board — columns adapt to the selected view */}
-        {!show.audit && (
-          <div
-            className="board"
-            style={{
-              gridTemplateColumns:
-                [show.incidents, show.prs, show.resolved].filter(Boolean).length === 1
-                  ? "minmax(0, 720px)"
-                  : undefined,
-            }}
-          >
-            {show.incidents && (
-              <section className="column">
-                <div className="column__head">
-                  <span
-                    className="column__icon"
-                    style={{ background: "var(--red-dim)", color: "var(--red)" }}
-                  >
-                    <IconAlert size={14} />
-                  </span>
-                  <span className="column__title">Active Incidents</span>
-                  <span className="column__count">{active.length}</span>
-                </div>
-                {loading && <div className="skeleton skeleton-card" />}
-                {!loading && active.length === 0 && (
-                  <div className="empty">No active incidents</div>
-                )}
-                {active.map((inc) => (
-                  <IncidentCard key={inc.id} incident={inc} />
-                ))}
-              </section>
-            )}
-
-            {show.prs && (
-              <section className="column">
-                <div className="column__head">
-                  <span
-                    className="column__icon"
-                    style={{ background: "var(--amber-dim)", color: "var(--amber)" }}
-                  >
-                    <IconPR size={14} />
-                  </span>
-                  <span className="column__title">Open PRs</span>
-                  <span className="column__count">{openPrs.length}</span>
-                </div>
-                {loading && <div className="skeleton skeleton-card" />}
-                {!loading && openPrs.length === 0 && (
-                  <div className="empty">No remediation PRs open</div>
-                )}
-                {openPrs.map((inc) => (
+        {/* ---------------- INCIDENTS (full history) ---------------- */}
+        {view === "incidents" && (
+          <div className="list">
+            {loading && <div className="skeleton skeleton-card" />}
+            {!loading && incidents.length === 0 && <div className="empty">No incidents recorded</div>}
+            {incidents
+              .filter((i) => i.status !== "RESOLVED_VERIFIED")
+              .map((inc) =>
+                inc.pull_request && (inc.status === "PR_OPEN" || inc.status === "DEPLOYING") ? (
                   <PullRequestCard
                     key={inc.id}
                     incident={inc}
                     onVerify={handleVerify}
                     verifying={verifyingId === inc.id}
                   />
-                ))}
-              </section>
+                ) : (
+                  <IncidentCard key={inc.id} incident={inc} />
+                )
+              )}
+            {!loading && incidents.filter((i) => i.status !== "RESOLVED_VERIFIED").length === 0 && (
+              <div className="empty">No open incidents — all clear</div>
             )}
+          </div>
+        )}
 
-            {show.resolved && (
-              <section className="column">
-                <div className="column__head">
-                  <span
-                    className="column__icon"
-                    style={{ background: "var(--green-dim)", color: "var(--green)" }}
-                  >
-                    <IconCheck size={14} />
-                  </span>
-                  <span className="column__title">Verified Resolutions</span>
-                  <span className="column__count">{resolved.length}</span>
-                </div>
-                {loading && <div className="skeleton skeleton-card" />}
-                {!loading && resolved.length === 0 && (
-                  <div className="empty">
-                    <IconClock size={18} />
-                    <div style={{ marginTop: 8 }}>No verified resolutions yet</div>
-                  </div>
-                )}
-                {resolved.map((inc) => (
+        {/* ---------------- PULL REQUESTS (full history) ---------------- */}
+        {view === "prs" && (
+          <div className="list">
+            {loading && <div className="skeleton skeleton-card" />}
+            {!loading &&
+              incidents.filter((i) => i.pull_request).length === 0 && (
+                <div className="empty">No remediation pull requests yet</div>
+              )}
+            {incidents
+              .filter((i) => i.pull_request)
+              .map((inc) =>
+                inc.status === "RESOLVED_VERIFIED" ? (
                   <ResolvedCard key={inc.id} incident={inc} />
-                ))}
-              </section>
+                ) : (
+                  <PullRequestCard
+                    key={inc.id}
+                    incident={inc}
+                    onVerify={handleVerify}
+                    verifying={verifyingId === inc.id}
+                  />
+                )
+              )}
+          </div>
+        )}
+
+        {/* ---------------- VERIFICATIONS (full history) ---------------- */}
+        {view === "verifications" && (
+          <div className="list">
+            {loading && <div className="skeleton skeleton-card" />}
+            {!loading && resolved.length === 0 && (
+              <div className="empty">
+                <IconClock size={18} />
+                <div style={{ marginTop: 8 }}>No verified resolutions yet</div>
+              </div>
             )}
+            {resolved.map((inc) => (
+              <ResolvedCard key={inc.id} incident={inc} />
+            ))}
+          </div>
+        )}
+
+        {/* ---------------- READ-ONLY AUDIT (governance) ---------------- */}
+        {view === "audit" && (
+          <div className="list">
+            {loading && <div className="skeleton skeleton-card" />}
+            {!loading && withAudit.length === 0 && (
+              <div className="empty">No audited agent activity yet</div>
+            )}
+            {withAudit.map((inc) => (
+              <AuditRecord key={inc.id} incident={inc} />
+            ))}
           </div>
         )}
       </main>
     </div>
   );
+}
+
+/* ---------- small presentational helpers ---------- */
+
+function StatCard(props: {
+  icon: JSX.Element;
+  tint: string;
+  bg: string;
+  value: number | string;
+  label: string;
+  hint: string;
+  onClick: () => void;
+}) {
+  return (
+    <button className="stat" onClick={props.onClick}>
+      <div className="stat__icon" style={{ background: props.bg, color: props.tint }}>
+        {props.icon}
+      </div>
+      <div className="stat__value">{props.value}</div>
+      <div className="stat__label">{props.label}</div>
+      <div className="stat__hint">{props.hint}</div>
+    </button>
+  );
+}
+
+function PreviewPanel(props: {
+  icon: JSX.Element;
+  tint: string;
+  bg: string;
+  title: string;
+  count: number;
+  onMore: () => void;
+  empty: string;
+  loading: boolean;
+  children?: React.ReactNode;
+}) {
+  const hasChild = !!props.children;
+  return (
+    <div className="panel">
+      <div className="panel__head">
+        <span className="panel__icon" style={{ background: props.bg, color: props.tint }}>
+          {props.icon}
+        </span>
+        <span className="panel__title">{props.title}</span>
+        <span className="panel__count">{props.count}</span>
+      </div>
+      {props.loading ? (
+        <div className="skeleton skeleton-card" />
+      ) : hasChild ? (
+        <>
+          {props.children}
+          {props.count > 1 && (
+            <button className="panel__more" onClick={props.onMore}>
+              View all {props.count} →
+            </button>
+          )}
+        </>
+      ) : (
+        <div className="empty">{props.empty}</div>
+      )}
+    </div>
+  );
+}
+
+// Audit view reuses the correct card per incident type so the read-only trail shows in context.
+function AuditRecord({ incident }: { incident: Incident }) {
+  if (incident.status === "RESOLVED_VERIFIED") return <ResolvedCard incident={incident} />;
+  if (incident.pull_request) {
+    // Render as an incident-style card (no verify button noise in the audit view).
+    return <IncidentCard incident={incident} />;
+  }
+  return <IncidentCard incident={incident} />;
 }
