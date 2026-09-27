@@ -19,7 +19,7 @@ It connects to live AWS infrastructure using the **Agent Toolkit for AWS (via Mo
 - Performs a **read-only** inspection of live AWS metrics via MCP.
 - Cross-references live AWS documentation to determine the correct fix.
 - Proposes an **Infrastructure as Code (AWS CDK)** patch by automatically opening a **GitHub Pull Request** with cost delta, `cdk diff`, and rollback notes.
-- Visualizes real-time diagnostic reports, active PR statuses, and **verified resolutions** on a publicly accessible dashboard hosted on **AWS Amplify**.
+- Visualizes real-time diagnostic reports, active PR statuses, and **verified resolutions** on a publicly accessible dashboard hosted on **Amazon S3 static website hosting**.
 
 ### Positioning: why this is not "another CloudWatch bot"
 
@@ -30,7 +30,7 @@ The Zero to Shipped field is crowded with autonomous-AWS-ops copilots (CloudPuls
 | Remediation artifact | Text runbook / "1-click script" | Merge-ready **CDK Pull Request** with `cdk diff` + cost delta + rollback |
 | Proof of outcome | "Here's what you should do" | **Re-verifies the live metric post-deploy** and posts confirmed resolution |
 | Safety model | Varies / auto-apply | Human-in-the-loop by construction — bot only inspects (read-only) and proposes |
-| Ship Gate | Often incomplete | Live public **Amplify URL**, 100% Free Tier |
+| Ship Gate | Often incomplete | Live public **S3 website URL**, 100% Free Tier |
 
 ## Category, Lane & Tagging Matrix
 
@@ -40,14 +40,23 @@ The Zero to Shipped field is crowded with autonomous-AWS-ops copilots (CloudPuls
 | Lane Tag (pick one) | `#startups` | High-value DevSecOps product addressing enterprise downtime and cloud-cost waste. (Official lane tag is `#startups`, plural.) |
 
 > **Rules note:** Per the official Zero to Shipped rules, submissions must carry exactly **one category tag** and **one lane tag**. Using AWS CDK and open-sourcing the repo are **not required** — CDK is used here because the agent's remediation artifact is a CDK PR, and a public repo is recommended only because judges reward seeing your development process. The hard requirements are: a documented coding-agent-to-AWS connection, a live public URL (Ship Gate), an original app, category + lane, and the write-up.
-| Mandatory Ship Gate | AWS Amplify Public URL | Automated Amplify Free Tier pipeline delivering a live, globally accessible dashboard. |
-| Agent Requirement | Agent Toolkit for AWS | Local coding agent (Kiro / Cursor / Q) linked via `aws configure agent-toolkit` using the AWS MCP Server. |
+| Mandatory Ship Gate | S3 static website public URL | Live, globally accessible dashboard on Amazon S3 static hosting (Amplify app limit was hit on the target account; S3 satisfies the same Ship Gate). |
+| Agent Requirement | Agent Toolkit for AWS | Coding agent (Kiro) linked to the **AWS MCP Server** via `uvx mcp-proxy-for-aws-cli`, using AWS profile `agentsentry` (account 273354655941). |
+
+### Live deployment (as shipped)
+
+| Component | URL / Name |
+|---|---|
+| Dashboard (Ship Gate) | http://agentsentry-dashboard-273354655941.s3-website-us-east-1.amazonaws.com |
+| API (Lambda + HTTP API Gateway) | https://6klp6vbzza.execute-api.us-east-1.amazonaws.com |
+| GitHub repo | https://github.com/sabari-07/Agentsentry |
+| Account / Region | 273354655941 / us-east-1 |
 
 ## AWS 100% Free Tier Budget Breakdown
 
 | Service | Free Tier Limit | AgentSentry AI Usage | Projected Cost |
 |---|---|---|---|
-| AWS Amplify Hosting | 1,000 build mins/mo, 15 GB bandwidth | Web UI for judges/public evaluation | $0.00 |
+| Amazon S3 static website | 5 GB storage, 20k GET/mo (free tier) | Public dashboard hosting for judges/public evaluation | $0.00 |
 | AWS Lambda | 1,000,000 requests/mo | Event processing and API backend | $0.00 |
 | Amazon API Gateway | 1,000,000 REST calls/mo | REST endpoints connecting UI to Lambda | $0.00 |
 | Amazon DynamoDB | 25 GB storage, 25 WCU / 25 RCU | Stores incidents, diagnostics, PR links, verification results | $0.00 |
@@ -89,8 +98,8 @@ graph TB
         end
 
         subgraph Public_UI["Public Gate Interface"]
-            Amplify["AWS Amplify Hosting"]
-            APIGW["Amazon API Gateway"]
+            S3Site["Amazon S3 Static Website (React dashboard)"]
+            APIGW["Amazon API Gateway (HTTP API)"]
         end
     end
 
@@ -109,8 +118,8 @@ graph TB
     EB -- Invoke --> Lambda
     Lambda -- Store Event --> DDB
 
-    Amplify -- Fetch Data --> APIGW
-    APIGW -- Query --> Lambda
+    S3Site -- Fetch Data (CORS *) --> APIGW
+    APIGW -- Proxy --> Lambda
     Lambda -- Read Records --> DDB
 
     Lambda -- Notify Event --> CodingAgent
@@ -231,9 +240,23 @@ Next.js frontend showing three columns: **Active Incidents**, **Open PRs** (with
 
 Add a small **"Read-Only Audit" panel** per incident that surfaces the agent's CloudTrail Event history entries (filtered to that incident's time window and IAM principal), showing every call was `Describe*` / `Get*` / `List*`. This is pulled from the free Event history — do not create a trail or S3 bucket. Presenting it cleanly (curated, filtered) is what makes it useful to a judge; a raw console dump is not.
 
-### Step 6: Deploy Amplify Dashboard (Pass the Ship Gate)
+### Step 6: Deploy the Dashboard to Amazon S3 (Pass the Ship Gate)
 
-Create a `dashboard/amplify.yml` build config, push code to GitHub, then in the AWS Console open AWS Amplify → New App → Host Web App → select your GitHub repo → Deploy. Amplify generates a public live URL (e.g., `https://main.d12345.amplifyapp.com`). This live URL passes the Ship Gate.
+Build the frontend (`npm run build`) and deploy `dist/` to an S3 static website bucket using
+`frontend/deploy_s3.ps1` (creates the bucket, enables website hosting, applies a public-read policy,
+and syncs the build). This produces a public live URL:
+
+```
+http://agentsentry-dashboard-273354655941.s3-website-us-east-1.amazonaws.com
+```
+
+This live URL passes the Ship Gate. (An `amplify.yml` is retained in the repo for anyone who
+prefers AWS Amplify hosting; S3 was used because the target account had reached its Amplify app
+limit.)
+
+**CORS note:** because the S3 site (HTTP) calls the API Gateway (HTTPS) cross-origin, the API's
+FastAPI CORS is set to allow all origins (`CORS_ORIGINS=*`, configured via the Lambda environment
+in the CDK stack), so the browser preflight (`OPTIONS`) succeeds.
 
 ### Step 7: AI Coding Agent Prompt Setup
 

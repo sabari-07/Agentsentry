@@ -18,10 +18,13 @@ def create_app() -> FastAPI:
         version="1.0.0",
     )
 
+    origins = container.settings.cors_origins_list
+    allow_all = "*" in origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=container.settings.cors_origins_list,
-        allow_credentials=True,
+        allow_origins=["*"] if allow_all else origins,
+        # Credentials cannot be combined with a wildcard origin per the CORS spec.
+        allow_credentials=not allow_all,
         allow_methods=["*"],
         allow_headers=["*"],
     )

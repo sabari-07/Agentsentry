@@ -81,6 +81,9 @@ class AgentSentryStack(Stack):
             "INCIDENT_TABLE_NAME": incident_table.table_name,
             "AWS_REGION_NAME": self.region,
             "AGENT_IAM_PRINCIPAL": "agentsentry-agent",
+            # Public dashboard can be hosted on any origin (S3/CloudFront), so
+            # allow all origins. The API is read-oriented and unauthenticated.
+            "CORS_ORIGINS": "*",
         }
 
         # --- API Lambda: serves the FastAPI dashboard API via Mangum ---
