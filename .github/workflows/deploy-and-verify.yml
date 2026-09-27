@@ -1,12 +1,19 @@
 name: Deploy and Verify
 
-# Runs when a remediation PR is merged into main. Deploys the CDK stack, then
-# fires the "deploy complete" event that invokes the verification loop — the
-# step that turns an incident into a RESOLVED_VERIFIED record with a timestamp.
+# Deploys the CDK stack, then fires the "deploy complete" event that invokes the
+# verification loop — turning an incident into a RESOLVED_VERIFIED record.
+#
+# Triggered MANUALLY (workflow_dispatch) so it never fails on pushes that lack
+# AWS credentials. To enable the automatic merge -> deploy -> verify flow, add
+# the repo secret AWS_DEPLOY_ROLE_ARN and switch the trigger to `push`.
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      incident_id:
+        description: "Incident ID to verify after deploy (e.g. INC-1001)"
+        required: false
+        default: ""
 
 # The remediation PR sets this so the workflow knows which incident to verify.
 # It can be provided via the commit message trailer "Incident: INC-..." or the
@@ -61,8 +68,9 @@ jobs:
       - name: Resolve incident id
         id: incident
         run: |
-          # Prefer an "Incident: INC-..." trailer in the merge commit message.
-          ID=$(git log -1 --pretty=%B | grep -oE 'INC-[0-9]+' | head -n1 || true)
+          # Prefer the manual input, then an "Incident: INC-..." commit trailer.
+          ID="${{ github.event.inputs.incident_id }}"
+          if [ -z "$ID" ]; then ID=$(git log -1 --pretty=%B | grep -oE 'INC-[0-9]+' | head -n1 || true); fi
           if [ -z "$ID" ]; then ID="${{ vars.INCIDENT_ID }}"; fi
           echo "id=$ID" >> "$GITHUB_OUTPUT"
           echo "Resolved incident id: $ID"
