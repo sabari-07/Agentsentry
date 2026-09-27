@@ -68,3 +68,24 @@ export const IconClock = ({ size, className }: P) => (
     <polyline points="12 6 12 12 16 14" />
   </svg>
 );
+
+// Brand logo: a shield with a radar/pulse mark — an infrastructure sentry
+// that watches and remediates. Uses currentColor so it inherits the gradient.
+export const IconLogo = ({ size = 22, className }: P) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.9}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3Z" />
+    <circle cx="12" cy="11" r="1.4" fill="currentColor" stroke="none" />
+    <path d="M9.2 11a2.8 2.8 0 0 1 5.6 0" opacity="0.9" />
+    <path d="M7 11a5 5 0 0 1 10 0" opacity="0.5" />
+  </svg>
+);
