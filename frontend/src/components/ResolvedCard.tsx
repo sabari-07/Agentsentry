@@ -1,6 +1,7 @@
 import type { Incident } from "../types/incident";
 import { formatTime, relativeTime } from "../utils/format";
 import { AuditPanel } from "./AuditPanel";
+import { IconExternal } from "./icons";
 
 interface Props {
   incident: Incident;
@@ -11,33 +12,37 @@ export function ResolvedCard({ incident }: Props) {
   const v = incident.verification;
   return (
     <div className="card">
-      <div className="card__row">
+      <div className="card__top">
         <h3 className="card__title">{incident.title}</h3>
         <span className={`pill pill--${incident.severity}`}>{incident.severity}</span>
       </div>
       <div className="card__meta">
-        {incident.resource_id} · {incident.metric_name} · {relativeTime(incident.updated_at)}
+        <span>{incident.resource_id}</span>
+        <span className="dot" />
+        <span>{incident.metric_name}</span>
+        <span className="dot" />
+        <span>{relativeTime(incident.updated_at)}</span>
       </div>
 
       {v && (
-        <div className="card__section">
+        <div className="section">
           <div className="verified">
-            <span>✓</span>
+            <span className="verified__check">✓</span>
             <span>
-              {v.summary} Verified at {formatTime(v.verified_at)}.
+              {v.summary}
+              <br />
+              <strong>Verified {formatTime(v.verified_at)}.</strong>
             </span>
           </div>
         </div>
       )}
 
       {incident.pull_request && (
-        <div className="card__section">
-          <div className="card__meta">
-            Fix shipped via{" "}
-            <a href={incident.pull_request.url} target="_blank" rel="noreferrer">
-              PR #{incident.pull_request.number}
-            </a>
-          </div>
+        <div className="section">
+          <div className="section__label">Fix shipped via</div>
+          <a href={incident.pull_request.url} target="_blank" rel="noreferrer" className="tag">
+            PR #{incident.pull_request.number} <IconExternal size={11} />
+          </a>
         </div>
       )}
 

@@ -8,29 +8,31 @@ interface Props {
 
 /** Active incident card: detected / diagnosing, with the read-only audit trail. */
 export function IncidentCard({ incident }: Props) {
+  const diagnosing = incident.status === "DIAGNOSING";
   return (
     <div className="card">
-      <div className="card__row">
+      <div className="card__top">
         <h3 className="card__title">{incident.title}</h3>
         <span className={`pill pill--${incident.severity}`}>{incident.severity}</span>
       </div>
       <div className="card__meta">
-        {incident.resource_id} · {incident.metric_name} · {relativeTime(incident.detected_at)}
+        <span>{incident.resource_id}</span>
+        <span className="dot" />
+        <span>{incident.metric_name}</span>
+        <span className="dot" />
+        <span>{relativeTime(incident.detected_at)}</span>
       </div>
 
-      {incident.diagnosis && (
-        <div className="card__section">
-          <div className="card__label">Diagnosis</div>
-          <p className="card__text">{incident.diagnosis}</p>
-        </div>
-      )}
-      {!incident.diagnosis && (
-        <div className="card__section">
-          <p className="card__text" style={{ color: "var(--text-dim)" }}>
-            Agent inspecting live metrics (read-only)…
+      <div className="section">
+        <div className="section__label">{diagnosing ? "Agent status" : "Detected"}</div>
+        {incident.diagnosis ? (
+          <p className="section__text">{incident.diagnosis}</p>
+        ) : (
+          <p className="section__text" style={{ color: "var(--brand)" }}>
+            ● Agent inspecting live metrics via read-only MCP…
           </p>
-        </div>
-      )}
+        )}
+      </div>
 
       <AuditPanel calls={incident.audit_calls} />
     </div>
