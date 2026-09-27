@@ -1,0 +1,11 @@
+# Minimum-version constraints (not hard pins) so pip can resolve wheels that
+# ship for your Python version, including Python 3.14. Pinning exact patch
+# versions caused source builds of pydantic-core on 3.14; these floors avoid that.
+fastapi>=0.115.5
+uvicorn[standard]>=0.32.1
+pydantic>=2.10.4
+pydantic-settings>=2.7.0
+boto3>=1.35.63
+httpx>=0.27.2
+python-dotenv>=1.0.1
+mangum>=0.19.0

@@ -1,0 +1,34 @@
+"""FastAPI application factory."""
+from __future__ import annotations
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api import audit, health, incidents, verification
+from app.core import configure_logging, get_container
+
+
+def create_app() -> FastAPI:
+    configure_logging()
+    container = get_container()
+
+    app = FastAPI(
+        title="AgentSentry AI",
+        description="Autonomous DevSecOps & cloud infrastructure auto-remediation copilot.",
+        version="1.0.0",
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=container.settings.cors_origins_list,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    app.include_router(health.router)
+    app.include_router(incidents.router)
+    app.include_router(verification.router)
+    app.include_router(audit.router)
+
+    return app

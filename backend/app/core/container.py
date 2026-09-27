@@ -1,0 +1,34 @@
+"""Lightweight dependency container.
+
+Instantiates services once and exposes them to FastAPI routes via dependency
+functions. Keeps wiring in one place and out of the route handlers.
+"""
+from __future__ import annotations
+
+from functools import lru_cache
+
+from app.services import (
+    CloudTrailService,
+    CloudWatchService,
+    GitHubService,
+    IncidentStore,
+    VerificationService,
+)
+from config import Settings, get_settings
+
+
+class Container:
+    """Holds singleton service instances for the app's lifetime."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.incident_store = IncidentStore(settings)
+        self.cloudwatch = CloudWatchService(settings)
+        self.cloudtrail = CloudTrailService(settings)
+        self.github = GitHubService(settings)
+        self.verification = VerificationService(settings, self.incident_store, self.cloudwatch)
+
+
+@lru_cache
+def get_container() -> Container:
+    return Container(get_settings())

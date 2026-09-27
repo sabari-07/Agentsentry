@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Environment / secrets
+.env
+*.env
+!*.env.example
+
+# Node / frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+*.tsbuildinfo
+frontend/vite.config.d.ts
+frontend/vite.config.js
+
+# CDK
+infra/cdk.out/
+infra/cdk.out.deploy/
+infra/cdk.out*/
+infra/.venv/
+
+# Backend venv and test artifacts
+backend/.venv/
+backend/test_linux_wheels/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.log

@@ -1,0 +1,79 @@
+name: Deploy and Verify
+
+# Runs when a remediation PR is merged into main. Deploys the CDK stack, then
+# fires the "deploy complete" event that invokes the verification loop — the
+# step that turns an incident into a RESOLVED_VERIFIED record with a timestamp.
+
+on:
+  push:
+    branches: [main]
+
+# The remediation PR sets this so the workflow knows which incident to verify.
+# It can be provided via the commit message trailer "Incident: INC-..." or the
+# INCIDENT_ID repo/environment variable.
+env:
+  AWS_REGION: us-east-1
+
+permissions:
+  contents: read
+  id-token: write # for OIDC-based AWS auth (recommended over static keys)
+
+jobs:
+  deploy-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node (for CDK CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk
+
+      - name: Install infra dependencies
+        working-directory: infra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: CDK diff (visible in logs)
+        working-directory: infra
+        run: cdk diff || true
+
+      - name: CDK deploy
+        working-directory: infra
+        run: cdk deploy --require-approval never
+
+      - name: Resolve incident id
+        id: incident
+        run: |
+          # Prefer an "Incident: INC-..." trailer in the merge commit message.
+          ID=$(git log -1 --pretty=%B | grep -oE 'INC-[0-9]+' | head -n1 || true)
+          if [ -z "$ID" ]; then ID="${{ vars.INCIDENT_ID }}"; fi
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "Resolved incident id: $ID"
+
+      - name: Invoke verification loop (deploy complete)
+        if: steps.incident.outputs.id != ''
+        run: |
+          aws lambda invoke \
+            --function-name agentsentry-verification-handler \
+            --payload "$(printf '{"incidentId":"%s"}' '${{ steps.incident.outputs.id }}')" \
+            --cli-binary-format raw-in-base64-out \
+            response.json
+          echo "Verification response:"
+          cat response.json
