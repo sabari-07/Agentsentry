@@ -673,3 +673,48 @@ a:hover { text-decoration: underline; }
   align-items: center;
   gap: 7px;
 }
+
+/* Judges' steps — richer layout with the "usually / proof" contrast */
+.step { align-items: flex-start; }
+.step__main { flex: 1; min-width: 0; }
+.step__n {
+  background: var(--gemini);
+  color: #fff;
+  font-weight: 800;
+}
+.step__title { font-size: 15px; }
+.step__body { margin-top: 7px; }
+.step__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 11px;
+}
+.step__usually {
+  font-size: 12px;
+  color: var(--text-3);
+  font-style: italic;
+  line-height: 1.5;
+}
+.step__usuallyKey {
+  font-style: normal;
+  font-weight: 700;
+  color: var(--red);
+  letter-spacing: 0.02em;
+}
+.step__proof {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--green);
+  background: var(--green-dim);
+  border: 1px solid rgba(87, 217, 163, 0.28);
+  border-radius: var(--radius-pill);
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+@media (max-width: 700px) {
+  .step__proof { margin-left: 0; }
+}
