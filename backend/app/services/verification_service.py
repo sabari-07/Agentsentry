@@ -43,10 +43,15 @@ class VerificationService:
             return None
 
         window = self._settings.verification_window_minutes
+        # Re-read the exact metric the alarm measured (namespace, dimensions and
+        # statistic captured at detection time), not a reconstruction of it.
         observed = self._cloudwatch.get_metric_value(
             metric_name=incident.metric_name,
             resource_id=incident.resource_id,
             window_minutes=window,
+            namespace=incident.metric_namespace,
+            dimensions=incident.metric_dimensions or None,
+            statistic=incident.metric_statistic,
         )
         healthy = observed < _HEALTHY_THRESHOLD
 

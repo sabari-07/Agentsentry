@@ -80,6 +80,14 @@ class Incident(BaseModel):
     resource_id: str          # e.g. the DynamoDB table name
     resource_type: str        # e.g. AWS::DynamoDB::Table
     metric_name: str          # e.g. ThrottledRequests
+    # The metric's identity, captured from the alarm that fired. Verification
+    # re-reads this exact metric rather than reconstructing its dimensions, which
+    # is what previously allowed a partial dimension set to silently match
+    # nothing and report a false "healthy".
+    metric_namespace: str | None = None
+    metric_dimensions: dict[str, str] = Field(default_factory=dict)
+    metric_statistic: str | None = None
+    alarm_name: str | None = None
     severity: Severity
     status: IncidentStatus
     diagnosis: str | None = None

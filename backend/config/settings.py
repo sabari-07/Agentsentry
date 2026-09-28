@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     github_token: str | None = None
     github_repo: str = "your-org/agentsentry-ai"
     github_base_branch: str = "main"
+    # Optional map of monitored resource -> repository that owns its IaC, so one
+    # deployment can raise pull requests against the right repo per resource.
+    # Format: "table-a=org/repo-a,function-b=org/repo-b". Falls back to
+    # github_repo for anything not listed.
+    resource_repo_map: str = ""
 
     # --- Behaviour ---
     verification_window_minutes: int = 5
@@ -69,6 +74,21 @@ class Settings(BaseSettings):
     def region(self) -> str:
         """Effective AWS region (prefers AWS_REGION_NAME when running on Lambda)."""
         return self.aws_region_name or self.aws_region
+
+    def repo_for_resource(self, resource_id: str) -> str:
+        """Repository that owns the IaC for ``resource_id``.
+
+        Uses RESOURCE_REPO_MAP when the resource is listed, otherwise the default
+        GITHUB_REPO. This is what lets a single deployment serve several projects.
+        """
+        for pair in self.resource_repo_map.split(","):
+            pair = pair.strip()
+            if not pair or "=" not in pair:
+                continue
+            resource, _, repo = pair.partition("=")
+            if resource.strip() == resource_id and repo.strip():
+                return repo.strip()
+        return self.github_repo
 
     @property
     def has_aws_credentials(self) -> bool:

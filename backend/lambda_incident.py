@@ -1,14 +1,19 @@
 """AWS Lambda entrypoint for the incident handler.
 
 Invoked by EventBridge when a CloudWatch alarm enters the ALARM state. It:
-  1. Creates a real incident record from the alarm.
-  2. Performs REAL read-only inspection of the affected resource (DescribeTable +
-     CloudWatch metrics) and records the exact API calls made (audit trail).
-  3. Produces an evidence-based diagnosis + proposed Infrastructure-as-Code fix.
-  4. Optionally opens a real GitHub PR when GITHUB_TOKEN is configured.
-  5. Persists the incident (PR_OPEN if a PR was proposed, else DIAGNOSING).
 
-Nothing about the outcome is hardcoded — the diagnosis reflects live data.
+  1. Reads the affected resource **from the alarm payload** — namespace, metric,
+     statistic and the metric's full dimension set. Nothing about the resource is
+     hardcoded, so pointing an alarm at another table, function or API routes
+     through the same code path.
+  2. Creates the incident record and stores that metric identity, so the later
+     verification step re-reads exactly the metric that fired.
+  3. Performs REAL read-only inspection and records every API call it made.
+  4. Consults live AWS documentation through the AWS MCP Server (Agent Toolkit).
+  5. Opens a real pull request against the repository that owns the affected
+     resource's infrastructure code.
+
+Nothing about the outcome is hardcoded: the diagnosis reflects live data.
 """
 from __future__ import annotations
 
@@ -17,6 +22,7 @@ from datetime import datetime, timezone
 
 from app.core import configure_logging, get_container
 from app.models import Incident, IncidentStatus, Severity
+from app.services.alarm_parser import parse_alarm_event
 
 configure_logging()
 logger = logging.getLogger("agentsentry.lambda.incident")
@@ -25,19 +31,30 @@ logger = logging.getLogger("agentsentry.lambda.incident")
 def handler(event: dict, _context) -> dict:
     logger.info("Incident event received: %s", event.get("detail-type"))
     container = get_container()
-    detail = event.get("detail", {})
+    settings = container.settings
 
-    alarm_name = detail.get("alarmName", "agentsentry-monitored-throttling")
-    resource_id = event.get("resourceId") or "agentsentry-monitored"
+    alarm = parse_alarm_event(event)
+    if not alarm.is_supported:
+        # Degrade rather than crash: record what we can so the alarm is visible.
+        logger.warning(
+            "Alarm %s is not a recognised resource (namespace=%r, dims=%s)",
+            alarm.alarm_name, alarm.namespace, alarm.dimensions,
+        )
+
     now = datetime.now(timezone.utc)
     incident_id = f"INC-{int(now.timestamp())}"
+    resource_id = alarm.resource_id or alarm.alarm_name
 
     incident = Incident(
         id=incident_id,
-        title=f"DynamoDB throttling detected on {resource_id}",
+        title=_title_for(alarm, resource_id),
         resource_id=resource_id,
-        resource_type="AWS::DynamoDB::Table",
-        metric_name="ThrottledRequests",
+        resource_type=alarm.resource_type,
+        metric_name=alarm.metric_name or "Unknown",
+        metric_namespace=alarm.namespace or None,
+        metric_dimensions=alarm.dimensions,
+        metric_statistic=alarm.statistic,
+        alarm_name=alarm.alarm_name,
         severity=Severity.HIGH,
         status=IncidentStatus.DIAGNOSING,
         diagnosis=None,
@@ -46,9 +63,19 @@ def handler(event: dict, _context) -> dict:
     )
     # Persist immediately so the dashboard shows the incident the moment it fires.
     container.incident_store.save_incident(incident)
-    logger.info("Stored incident %s (DIAGNOSING)", incident.id)
+    logger.info(
+        "Stored incident %s (DIAGNOSING) for %s %s",
+        incident.id, incident.resource_type, incident.resource_id,
+    )
 
-    # --- Real read-only inspection + diagnosis ---
+    # Only resources we know how to reason about get a diagnosis and a PR.
+    if alarm.namespace != "AWS/DynamoDB":
+        logger.info(
+            "No remediation rule for %s yet; incident recorded for review.",
+            alarm.namespace or "unknown namespace",
+        )
+        return {"incidentId": incident.id, "status": incident.status.value}
+
     try:
         facts = container.diagnosis.inspect_table(resource_id)
 
@@ -63,8 +90,9 @@ def handler(event: dict, _context) -> dict:
         incident.audit_calls = facts["audit_calls"]
 
         if pr is not None:
-            # Open a real GitHub PR when configured (branch + commit + PR).
-            created = _maybe_open_pr(container, incident, pr, diagnosis, facts)
+            # Route the pull request to whichever repo owns this resource's IaC.
+            repo = settings.repo_for_resource(resource_id)
+            created = _maybe_open_pr(container, incident, pr, diagnosis, facts, repo)
             incident.pull_request = created or pr
             incident.status = IncidentStatus.PR_OPEN
         incident.updated_at = datetime.now(timezone.utc)
@@ -76,13 +104,26 @@ def handler(event: dict, _context) -> dict:
     return {"incidentId": incident.id, "status": incident.status.value}
 
 
-def _maybe_open_pr(container, incident, pr, diagnosis: str, facts: dict):
+def _title_for(alarm, resource_id: str) -> str:
+    """Human-readable title derived from the alarm, not a fixed string."""
+    friendly = {
+        "ThrottledRequests": "throttling detected",
+        "Duration": "elevated duration",
+        "5XXError": "elevated 5XX error rate",
+        "Errors": "elevated error rate",
+    }.get(alarm.metric_name, f"{alarm.metric_name or 'alarm'} breached")
+    service = (alarm.namespace or "AWS").removeprefix("AWS/")
+    return f"{service} {friendly} on {resource_id}"
+
+
+def _maybe_open_pr(container, incident, pr, diagnosis: str, facts: dict, repo: str):
     """Create a real remediation branch + commit + PR when GitHub is configured."""
-    gh = container.github
+    gh = container.github.for_repo(repo)
     if not gh.configured:
-        logger.info("GitHub not configured; recording proposed fix without opening a PR.")
+        logger.info("GitHub not configured for %s; recording proposed fix only.", repo)
         return None
 
+    logger.info("Opening remediation PR against %s", repo)
     narrative = facts.get("_narrative", {})
     body = gh.build_pr_body(
         diagnosis=diagnosis,
@@ -105,7 +146,9 @@ def _maybe_open_pr(container, incident, pr, diagnosis: str, facts: dict):
         f"| Field | Value |\n| --- | --- |\n"
         f"| Resource | `{incident.resource_id}` |\n"
         f"| Resource type | `{incident.resource_type}` |\n"
-        f"| Breaching metric | `{incident.metric_name}` |\n"
+        f"| Alarm | `{incident.alarm_name}` |\n"
+        f"| Breaching metric | `{incident.metric_namespace}/{incident.metric_name}` |\n"
+        f"| Metric dimensions | `{incident.metric_dimensions}` |\n"
         f"| Severity | {incident.severity.value} |\n"
         f"| Detected at | {incident.detected_at.isoformat()} |\n\n"
         f"## What went wrong\n\n{diagnosis}\n\n"
@@ -129,7 +172,7 @@ def _maybe_open_pr(container, incident, pr, diagnosis: str, facts: dict):
             f"- `{c.event_name}` ({c.aws_service.replace('.amazonaws.com', '')}) — read-only"
             for c in incident.audit_calls
         )
-        + f"\n\n---\n_Generated by AgentSentry AI from live read-only AWS inspection._\n"
+        + "\n\n---\n_Generated by AgentSentry AI from live read-only AWS inspection._\n"
     )
 
     data = gh.create_remediation_pr(

@@ -72,13 +72,26 @@ class CloudWatchService:
         dims += [{"Name": k, "Value": v} for k, v in spec["extra_dimensions"].items()]
         return dims
 
-    def get_metric_value(self, metric_name: str, resource_id: str, window_minutes: int) -> float:
+    def get_metric_value(
+        self,
+        metric_name: str,
+        resource_id: str,
+        window_minutes: int,
+        *,
+        namespace: str | None = None,
+        dimensions: dict[str, str] | None = None,
+        statistic: str | None = None,
+    ) -> float:
         """Return the observed value of ``metric_name`` over the window.
 
-        Uses the metric's correct full dimension set and statistic. A genuinely
-        absent metric (no datapoints) means the condition is not occurring, which
-        is the healthy case; but the dimension set must be right or "no data"
-        would be indistinguishable from "recovered".
+        Prefers the metric identity captured from the alarm (``namespace``,
+        ``dimensions``, ``statistic``) so verification measures exactly the metric
+        that fired. Falls back to the built-in spec table for records created
+        before that identity was stored.
+
+        A genuinely absent metric (no datapoints) means the condition is not
+        occurring, which is the healthy case — but the dimension set must be
+        right, or "no data" is indistinguishable from "recovered".
 
         In mock mode this returns 0.0 (healthy) so the loop can be demoed without
         live infrastructure.
@@ -87,15 +100,31 @@ class CloudWatchService:
             logger.info("[mock] metric %s for %s -> 0.0", metric_name, resource_id)
             return 0.0
 
-        spec = _METRIC_SPECS[metric_name]
-        statistic = spec["statistic"]
+        if dimensions:
+            query_dims = [{"Name": k, "Value": v} for k, v in dimensions.items()]
+            query_ns = namespace or _METRIC_SPECS[metric_name]["namespace"]
+            query_stat = statistic or _METRIC_SPECS[metric_name]["statistic"]
+            source = "alarm"
+        else:
+            spec = _METRIC_SPECS[metric_name]
+            query_dims = self.build_dimensions(metric_name, resource_id)
+            query_ns = spec["namespace"]
+            query_stat = spec["statistic"]
+            source = "spec"
+
+        statistic = query_stat
         end = datetime.now(timezone.utc)
         start = end - timedelta(minutes=window_minutes)
 
+        logger.info(
+            "verifying %s/%s via %s dims=%s stat=%s",
+            query_ns, metric_name, source,
+            {d["Name"]: d["Value"] for d in query_dims}, statistic,
+        )
         response = self._client.get_metric_statistics(
-            Namespace=spec["namespace"],
+            Namespace=query_ns,
             MetricName=metric_name,
-            Dimensions=self.build_dimensions(metric_name, resource_id),
+            Dimensions=query_dims,
             StartTime=start,
             EndTime=end,
             Period=60,

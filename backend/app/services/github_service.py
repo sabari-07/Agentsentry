@@ -29,17 +29,27 @@ _GITHUB_API = "https://api.github.com"
 class GitHubService:
     """Thin GitHub REST client scoped to creating remediation PRs."""
 
-    def __init__(self, settings: Settings) -> None:
-        self._settings = settings
-
     # ------------------------------------------------------------------ #
     # Config helpers
     # ------------------------------------------------------------------ #
+    def __init__(self, settings: Settings, repo: str | None = None) -> None:  # noqa: D107
+        self._settings = settings
+        # A per-resource repository override, so one deployment can raise pull
+        # requests against whichever repo owns the affected resource's IaC.
+        self._repo = repo or settings.github_repo
+
+    def for_repo(self, repo: str) -> "GitHubService":
+        """Return a client bound to a different repository."""
+        return GitHubService(self._settings, repo)
+
+    @property
+    def repo(self) -> str:
+        return self._repo
+
     @property
     def configured(self) -> bool:
         """True when a token and a real repo are configured."""
-        s = self._settings
-        return bool(s.github_token) and "your-org" not in s.github_repo
+        return bool(self._settings.github_token) and "your-org" not in self._repo
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -49,7 +59,7 @@ class GitHubService:
         }
 
     def _repo_url(self, path: str) -> str:
-        return f"{_GITHUB_API}/repos/{self._settings.github_repo}{path}"
+        return f"{_GITHUB_API}/repos/{self._repo}{path}"
 
     # ------------------------------------------------------------------ #
     # PR body
