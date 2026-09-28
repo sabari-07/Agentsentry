@@ -144,8 +144,12 @@ class AgentSentryStack(Stack):
             runtime=lambda_.Runtime.PYTHON_3_12,
             handler="lambda_incident.handler",
             code=code,
-            memory_size=128,
-            timeout=Duration.seconds(60),
+            # Sized for the reasoning path: a measured run used 123 MB of 128 MB
+            # and 37 s of 60 s once the Bedrock client was loaded, which left no
+            # headroom at all. More memory also raises the CPU share, so the
+            # model call completes sooner.
+            memory_size=512,
+            timeout=Duration.seconds(120),
             environment=common_env,
         )
         incident_table.grant_read_write_data(incident_fn)
