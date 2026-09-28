@@ -136,10 +136,26 @@ export function Judges({ onExit }: Props) {
             Before recommending anything it queried the <b>AWS MCP Server (Agent Toolkit for AWS)</b>{" "}
             over SigV4-signed HTTPS and searched current AWS documentation, then{" "}
             <b>cited the sources in the pull request</b>. So the recommendation is anchored to what AWS
-            publishes today, not to my assumptions.{" "}
+            publishes today, not to a model's training data.{" "}
             <a href={PR_DOCS} target="_blank" rel="noreferrer">
               See the citations <IconExternal size={11} />
             </a>
+          </Step>
+
+          <Step
+            n="4b"
+            title="A model reasons — but it cannot act on its own word"
+            usually="Either a model writes changes unsupervised, or fixed rules handle one case."
+            proof="Structured decision, then deterministic guards"
+          >
+            The measured evidence goes to <b>Claude Sonnet 4.6 on Amazon Bedrock</b>, which returns a{" "}
+            <b>structured decision</b> — a root cause, one action from a fixed allowlist, a target
+            resource and a confidence — never code. Deterministic guards then decide whether it may
+            act: the action must be permitted, the <b>target must match the resource the alarm named</b>{" "}
+            (so it cannot redirect a fix at another table), and low confidence or "no safe fix" opens
+            no PR at all. In production it has already <b>declined to act</b> on a table that was
+            already healthy, and recorded why. If the model is unreachable, a deterministic diagnosis
+            takes over. The model reasons; it never holds the authority to change infrastructure.
           </Step>
 
           <Step
@@ -163,9 +179,10 @@ export function Judges({ onExit }: Props) {
             proof="Merging is a GitHub action"
           >
             The agent <b>never merges and never applies a change</b>. It has no path to mutate
-            infrastructure. A person must approve the PR, and the merged IaC must then be deployed by
-            the deployment pipeline. The blast radius of a bad suggestion is therefore a rejected
-            pull request, not an unreviewed AWS mutation.
+            infrastructure. When a human merges, GitHub Actions authenticates to AWS via{" "}
+            <b>IAM OIDC — no long-lived keys in CI</b> — and runs <code>cdk deploy</code>; only after
+            that deploy succeeds does verification run. The blast radius of a bad suggestion is
+            therefore a rejected pull request, not an unreviewed AWS mutation.
           </Step>
 
           <Step
@@ -248,8 +265,10 @@ export function Judges({ onExit }: Props) {
             real throttling; a new incident and a new PR appear within a few minutes.
           </li>
           <li>
-            <b>The tests</b> — <code>pytest</code> in <code>backend/</code> runs 46 tests, including
-            regression tests for the verification bug above.
+            <b>The tests</b> — <code>pytest</code> runs <b>98 tests</b> (90 backend, 8
+            infrastructure), including regressions for the verification bug above, a test that
+            rejects a model decision aimed at the wrong resource, and one that proves the inference
+            credentials are never deleted before their expiry date.
           </li>
         </ul>
       </section>
@@ -291,17 +310,23 @@ export function Judges({ onExit }: Props) {
             <code>List*</code> only, and every call is recorded.
           </li>
           <li>
-            A language model never decides the fix. Deterministic rules read the observed state, so the
-            same input always yields the same reviewable recommendation.
+            A model reasons over the evidence, but it never holds authority to act: it picks from a
+            fixed action set and must name the resource the alarm named, and a deterministic layer
+            applies the edit. It cannot author arbitrary code or redirect a fix elsewhere.
           </li>
           <li>It does not claim success it has not measured.</li>
+          <li>
+            The inference credentials live in an encrypted parameter scoped to one name, and a
+            scheduled job deletes them after judging — the reasoning layer then falls back to a
+            deterministic diagnosis.
+          </li>
         </ul>
       </section>
 
       <footer className="judges__foot">
         <span>
-          <IconShield size={13} /> Read-only by construction · human-in-the-loop by design · 100% AWS
-          Free Tier
+          <IconShield size={13} /> Read-only by construction · human-in-the-loop by design ·
+          reasoning guarded by deterministic checks
         </span>
         <a href={REPO} target="_blank" rel="noreferrer">
           Repository <IconExternal size={11} />
