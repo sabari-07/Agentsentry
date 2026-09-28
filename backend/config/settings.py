@@ -44,6 +44,9 @@ class Settings(BaseSettings):
 
     # --- AWS resources ---
     incident_table_name: str = "agentsentry-incidents"
+    # S3 bucket holding the built dashboard, served over the API's HTTPS
+    # endpoint. Empty leaves the API running without serving the site.
+    dashboard_bucket: str = ""
     agent_iam_principal: str = "agentsentry-agent"
 
     # --- LLM reasoning (optional) ---

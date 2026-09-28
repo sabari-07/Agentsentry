@@ -44,6 +44,11 @@ BACKEND_DIR = str((Path(__file__).resolve().parents[2] / "backend").as_posix())
 # runtime which store to read.
 LLM_SECRET_NAME = "/agentsentry/llm"
 
+# Bucket holding the built dashboard. Served over the API's HTTPS endpoint
+# because the S3 website endpoint is HTTP-only and CloudFront is unavailable
+# until the account is verified.
+DASHBOARD_BUCKET = "agentsentry-dashboard-273354655941"
+
 # Date the stored inference credentials are deleted automatically. Hackathon
 # winners are announced the week of 19 Oct 2026 and the rules allow AWS to extend
 # that while verifying eligibility, so this leaves a deliberate buffer. After
@@ -116,6 +121,8 @@ class AgentSentryStack(Stack):
             # Secrets Manager secret holding inference-only credentials, region
             # and model id. Empty/absent simply disables the reasoning layer.
             "LLM_SECRET_NAME": LLM_SECRET_NAME,
+            # Lets the API Lambda serve the dashboard from S3 over HTTPS.
+            "DASHBOARD_BUCKET": DASHBOARD_BUCKET,
             # GitHub config for opening real remediation PRs. Read from the local
             # backend/config/.env at synth time so the token is never committed.
             **_github_env(),
@@ -137,6 +144,9 @@ class AgentSentryStack(Stack):
         # The API Lambda runs the verification endpoint, which re-checks the
         # live CloudWatch metric — grant it the read-only CloudWatch policy.
         api_fn.add_to_role_policy(_cloudwatch_read_policy())
+        # Read-only access to the dashboard bucket so the API can serve the
+        # SPA over HTTPS. Scoped to this one bucket's objects.
+        api_fn.add_to_role_policy(_dashboard_read_policy())
 
         # --- Incident Lambda: invoked by EventBridge on alarm, writes PENDING ---
         incident_fn = lambda_.Function(
@@ -192,12 +202,16 @@ class AgentSentryStack(Stack):
                 allow_headers=["*"],
             ),
         )
+        api_integration = apigw_integrations.HttpLambdaIntegration(
+            "ApiIntegration", handler=api_fn
+        )
+        # "/{proxy+}" does not match the root, so route "/" explicitly — that is
+        # where the dashboard is served.
         http_api.add_routes(
-            path="/{proxy+}",
-            methods=[apigwv2.HttpMethod.ANY],
-            integration=apigw_integrations.HttpLambdaIntegration(
-                "ApiIntegration", handler=api_fn
-            ),
+            path="/", methods=[apigwv2.HttpMethod.ANY], integration=api_integration
+        )
+        http_api.add_routes(
+            path="/{proxy+}", methods=[apigwv2.HttpMethod.ANY], integration=api_integration
         )
 
         # --- Scheduled credential expiry -------------------------------- #
@@ -570,6 +584,16 @@ def _llm_credential_delete_policies(region: str, account: str) -> list:
             resources=[f"arn:aws:secretsmanager:{region}:{account}:secret:{parameter_name}-*"],
         ),
     ]
+
+
+def _dashboard_read_policy():
+    """Read-only access to the dashboard bucket's objects, nothing else."""
+    from aws_cdk import aws_iam as iam
+
+    return iam.PolicyStatement(
+        actions=["s3:GetObject"],
+        resources=[f"arn:aws:s3:::{DASHBOARD_BUCKET}/*"],
+    )
 
 
 def _dynamodb_describe_policy(table_arn: str):

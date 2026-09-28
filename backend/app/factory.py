@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import audit, health, incidents, verification
+from app.api import audit, health, incidents, static_site, verification
 from app.core import configure_logging, get_container
 
 
@@ -33,5 +33,9 @@ def create_app() -> FastAPI:
     app.include_router(incidents.router)
     app.include_router(verification.router)
     app.include_router(audit.router)
+    # Registered last so the /api routers above take precedence; this one
+    # serves the dashboard SPA from S3 over the API's HTTPS endpoint and owns
+    # the catch-all route.
+    app.include_router(static_site.router)
 
     return app
