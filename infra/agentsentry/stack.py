@@ -90,6 +90,9 @@ class AgentSentryStack(Stack):
             # Public dashboard can be hosted on any origin (S3/CloudFront), so
             # allow all origins. The API is read-oriented and unauthenticated.
             "CORS_ORIGINS": "*",
+            # GitHub config for opening real remediation PRs. Read from the local
+            # backend/config/.env at synth time so the token is never committed.
+            **_github_env(),
         }
 
         # --- API Lambda: serves the FastAPI dashboard API via Mangum ---
@@ -284,6 +287,32 @@ def _bundling_options():
             "pip install -r requirements.txt -t /asset-output && cp -r . /asset-output",
         ],
     )
+
+
+def _github_env() -> dict:
+    """Read GitHub settings from backend/config/.env (never committed).
+
+    Returns an empty dict when not configured, so the pipeline simply records the
+    proposed fix instead of opening a PR.
+    """
+    env_file = Path(BACKEND_DIR) / "config" / ".env"
+    if not env_file.exists():
+        return {}
+
+    values: dict[str, str] = {}
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        values[key.strip()] = val.strip()
+
+    token = values.get("GITHUB_TOKEN", "")
+    repo = values.get("GITHUB_REPO", "")
+    base = values.get("GITHUB_BASE_BRANCH", "main")
+    if not token or not repo or "your-org" in repo:
+        return {}
+    return {"GITHUB_TOKEN": token, "GITHUB_REPO": repo, "GITHUB_BASE_BRANCH": base}
 
 
 def _dynamodb_describe_policy(table_arn: str):

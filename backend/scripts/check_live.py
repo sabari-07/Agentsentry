@@ -2,8 +2,13 @@ import httpx
 
 API = "https://6klp6vbzza.execute-api.us-east-1.amazonaws.com"
 data = httpx.get(f"{API}/api/incidents", timeout=30).json()
+print("incident count:", len(data))
 for i in data:
-    if i["status"] in ("PR_OPEN", "DEPLOYING", "DIAGNOSING"):
-        r = httpx.post(f"{API}/api/verification/{i['id']}", timeout=60)
-        print("status_code:", r.status_code)
-        print("body:", r.text[:500])
+    print(f"\n{i['id']} | {i['status']} | {i['title']}")
+    pr = i.get("pull_request")
+    if pr:
+        print("  PR number:", pr["number"])
+        print("  PR url   :", pr["url"] or "(none - not created)")
+        print("  branch   :", pr["branch"])
+    audit = httpx.get(f"{API}/api/audit/{i['id']}", timeout=30).json()
+    print("  audit    :", [(a["event_name"], a["read_only"]) for a in audit])
