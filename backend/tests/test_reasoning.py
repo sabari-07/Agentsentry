@@ -7,6 +7,7 @@ fails. These tests pin that boundary.
 from __future__ import annotations
 
 import json
+import sys
 
 from app.services.reasoning_service import (
     ACTION_NO_SAFE_FIX,
@@ -134,3 +135,100 @@ def test_evidence_prompt_contains_the_measured_numbers():
     assert "On-demand mode" in prompt
     # The model is told which resource it must echo, so validation can pin it.
     assert "must echo back" in prompt
+
+
+# --------------------------------------------------------------------------- #
+# Credential store selection (Parameter Store is free; Secrets Manager is not)
+# --------------------------------------------------------------------------- #
+def _fake_boto3(session_cls):
+    """Stand in for the boto3 module.
+
+    The service imports boto3 lazily inside the function, so the substitution has
+    to happen in sys.modules rather than on the service module.
+    """
+    return type("boto3", (), {"Session": session_cls})
+
+
+def test_leading_slash_selects_parameter_store(monkeypatch):
+    """A "/" prefix must read SSM, so the free standard tier is used."""
+    calls: list[str] = []
+
+    class _SSM:
+        def get_parameter(self, Name, WithDecryption):  # noqa: N803
+            calls.append(f"ssm:{Name}:{WithDecryption}")
+            return {"Parameter": {"Value": json.dumps({
+                "aws_access_key_id": "AKIAEXAMPLE",
+                "aws_secret_access_key": "shhh",
+                "region": "ap-south-1",
+                "model_id": "global.anthropic.claude-sonnet-4-6",
+            })}}
+
+    class _Session:
+        def __init__(self, **_kwargs):
+            pass
+
+        def client(self, name, **_kwargs):
+            calls.append(f"client:{name}")
+            assert name == "ssm", "must not touch Secrets Manager for a /-prefixed name"
+            return _SSM()
+
+    monkeypatch.setitem(sys.modules, "boto3", _fake_boto3(_Session))
+    service = ReasoningService(_settings(llm_secret_name="/agentsentry/llm"))
+    config = service._load_config()
+
+    assert config is not None
+    assert config["model_id"] == "global.anthropic.claude-sonnet-4-6"
+    assert config["region"] == "ap-south-1"
+    assert "client:ssm" in calls
+    assert "ssm:/agentsentry/llm:True" in calls  # decryption requested
+
+
+def test_name_without_slash_selects_secrets_manager(monkeypatch):
+    seen: list[str] = []
+
+    class _SM:
+        def get_secret_value(self, SecretId):  # noqa: N803
+            seen.append(SecretId)
+            return {"SecretString": json.dumps({
+                "aws_access_key_id": "AKIAEXAMPLE",
+                "aws_secret_access_key": "shhh",
+                "region": "us-east-1",
+                "model_id": "amazon.nova-micro-v1:0",
+            })}
+
+    class _Session:
+        def __init__(self, **_kwargs):
+            pass
+
+        def client(self, name, **_kwargs):
+            assert name == "secretsmanager"
+            return _SM()
+
+    monkeypatch.setitem(sys.modules, "boto3", _fake_boto3(_Session))
+    service = ReasoningService(_settings(llm_secret_name="agentsentry/llm"))
+
+    assert service._load_config() is not None
+    assert seen == ["agentsentry/llm"]
+
+
+def test_incomplete_credentials_disable_reasoning(monkeypatch):
+    """Missing model_id must disable reasoning rather than half-configure it."""
+    class _SSM:
+        def get_parameter(self, Name, WithDecryption):  # noqa: N803
+            return {"Parameter": {"Value": json.dumps({
+                "aws_access_key_id": "AKIAEXAMPLE",
+                "aws_secret_access_key": "shhh",
+                "region": "ap-south-1",
+            })}}
+
+    class _Session:
+        def __init__(self, **_kwargs):
+            pass
+
+        def client(self, name, **_kwargs):
+            return _SSM()
+
+    monkeypatch.setitem(sys.modules, "boto3", _fake_boto3(_Session))
+    service = ReasoningService(_settings(llm_secret_name="/agentsentry/llm"))
+
+    assert service._load_config() is None

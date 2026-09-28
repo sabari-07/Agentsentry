@@ -112,17 +112,30 @@ class ReasoningService:
         try:
             import boto3
 
-            # Read the secret with the application's own identity.
+            # Read the credentials with the application's own identity.
             session = boto3.Session(
                 aws_access_key_id=self._settings.aws_access_key_id,
                 aws_secret_access_key=self._settings.aws_secret_access_key,
                 aws_session_token=self._settings.aws_session_token,
                 region_name=self._settings.region,
             )
-            raw = session.client("secretsmanager").get_secret_value(SecretId=secret_name)
-            payload = json.loads(raw["SecretString"])
+            # A leading "/" means an SSM Parameter Store SecureString, which is
+            # free at the standard tier. Anything else is a Secrets Manager
+            # secret id, which is billed per secret per month.
+            if secret_name.startswith("/"):
+                raw = session.client("ssm").get_parameter(
+                    Name=secret_name, WithDecryption=True
+                )
+                document = raw["Parameter"]["Value"]
+            else:
+                document = session.client("secretsmanager").get_secret_value(
+                    SecretId=secret_name
+                )["SecretString"]
+            payload = json.loads(document)
         except Exception:  # noqa: BLE001
-            logger.exception("Could not read LLM secret %s; reasoning disabled.", secret_name)
+            logger.exception(
+                "Could not read LLM credentials from %s; reasoning disabled.", secret_name
+            )
             return None
 
         # Accept a few common key spellings so the secret is easy to author.

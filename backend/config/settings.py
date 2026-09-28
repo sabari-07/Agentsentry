@@ -47,11 +47,15 @@ class Settings(BaseSettings):
     agent_iam_principal: str = "agentsentry-agent"
 
     # --- LLM reasoning (optional) ---
-    # Secrets Manager secret holding the credentials, region and model id used
-    # *only* for inference. Kept separate from the application's own AWS
-    # identity so the model entitlement can live in a different account.
-    # Expected JSON keys: aws_access_key_id, aws_secret_access_key, region,
-    # model_id. Empty disables reasoning and the deterministic path is used.
+    # Where the inference-only credentials live. Kept separate from the
+    # application's own AWS identity so the model entitlement can sit in a
+    # different account.
+    #
+    # A leading "/" selects SSM Parameter Store (SecureString, free at the
+    # standard tier); any other value is treated as a Secrets Manager secret id
+    # (billed monthly). Expected JSON in either case:
+    #   {"aws_access_key_id", "aws_secret_access_key", "region", "model_id"}
+    # Empty disables reasoning and the deterministic diagnosis is used.
     llm_secret_name: str = ""
 
     # --- GitHub ---

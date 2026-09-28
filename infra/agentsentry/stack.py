@@ -32,10 +32,15 @@ from constructs import Construct
 # Path to the backend package that becomes the Lambda deployment bundle.
 BACKEND_DIR = str((Path(__file__).resolve().parents[2] / "backend").as_posix())
 
-# Secrets Manager secret that carries the LLM inference credentials, region and
-# model id. Deliberately separate from the application's own AWS identity so the
-# model entitlement can live in a different account.
-LLM_SECRET_NAME = "agentsentry/llm"
+# Where the LLM inference credentials, region and model id are stored.
+# Deliberately separate from the application's own AWS identity so the model
+# entitlement can live in a different account.
+#
+# An SSM Parameter Store SecureString is used rather than a Secrets Manager
+# secret: standard-tier parameters and the AWS managed KMS key are free, whereas
+# Secrets Manager bills per secret per month. The leading "/" is what tells the
+# runtime which store to read.
+LLM_SECRET_NAME = "/agentsentry/llm"
 
 
 class AgentSentryStack(Stack):
@@ -140,9 +145,10 @@ class AgentSentryStack(Stack):
         # Needs to inspect the monitored table + read CloudWatch metrics (read-only).
         monitored_table.grant_read_data(incident_fn)
         incident_fn.add_to_role_policy(_dynamodb_describe_policy(monitored_table.table_arn))
-        # Read the inference credentials only. Scoped to this one secret name so
-        # the incident Lambda cannot enumerate or read anything else.
-        incident_fn.add_to_role_policy(_llm_secret_read_policy(self.region, self.account))
+        # Read the inference credentials only. Scoped to this one name so the
+        # incident Lambda cannot enumerate or read anything else.
+        for statement in _llm_secret_read_policies(self.region, self.account):
+            incident_fn.add_to_role_policy(statement)
         incident_fn.add_to_role_policy(_cloudwatch_read_policy())
 
         # --- Verification Lambda: re-checks the metric post-deploy ---
@@ -391,15 +397,31 @@ def _github_env() -> dict:
     return {"GITHUB_TOKEN": token, "GITHUB_REPO": repo, "GITHUB_BASE_BRANCH": base}
 
 
-def _llm_secret_read_policy(region: str, account: str):
-    """Allow reading just the LLM credentials secret, nothing else."""
+def _llm_secret_read_policies(region: str, account: str) -> list:
+    """Allow reading only the LLM credentials, from either supported store."""
     from aws_cdk import aws_iam as iam
 
-    return iam.PolicyStatement(
-        actions=["secretsmanager:GetSecretValue"],
-        # Secrets Manager appends a random 6-character suffix to the ARN.
-        resources=[f"arn:aws:secretsmanager:{region}:{account}:secret:{LLM_SECRET_NAME}-*"],
-    )
+    parameter_name = LLM_SECRET_NAME.lstrip("/")
+    statements = [
+        iam.PolicyStatement(
+            actions=["ssm:GetParameter"],
+            resources=[f"arn:aws:ssm:{region}:{account}:parameter/{parameter_name}"],
+        ),
+        # SecureString values are decrypted with the AWS managed key for SSM.
+        # Scoped so this grant cannot be used against any other service.
+        iam.PolicyStatement(
+            actions=["kms:Decrypt"],
+            resources=["*"],
+            conditions={"StringEquals": {"kms:ViaService": f"ssm.{region}.amazonaws.com"}},
+        ),
+        # Kept so a Secrets Manager id also works without a redeploy.
+        iam.PolicyStatement(
+            actions=["secretsmanager:GetSecretValue"],
+            # Secrets Manager appends a random 6-character suffix to the ARN.
+            resources=[f"arn:aws:secretsmanager:{region}:{account}:secret:{parameter_name}-*"],
+        ),
+    ]
+    return statements
 
 
 def _dynamodb_describe_policy(table_arn: str):
