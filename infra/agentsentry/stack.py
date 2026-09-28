@@ -240,16 +240,19 @@ def _bundling_options():
     requirements into the asset staging directory. Falls back to the standard
     Docker-based pip install if local bundling is unavailable.
 
-    Set ``AGENTSENTRY_SKIP_BUNDLE=1`` to skip dependency installation. Unit tests
-    that only assert on the synthesised template use this so they don't pay for a
-    full pip install per synth; deploys never set it.
+    ``AGENTSENTRY_SKIP_BUNDLE=1`` is honoured only inside pytest. This keeps
+    template-only tests fast without allowing a leaked shell variable to produce
+    a dependency-free production Lambda artifact.
     """
     import os
     import shutil
     import subprocess
     from pathlib import Path
 
-    if os.environ.get("AGENTSENTRY_SKIP_BUNDLE") == "1":
+    if (
+        os.environ.get("AGENTSENTRY_SKIP_BUNDLE") == "1"
+        and "PYTEST_CURRENT_TEST" in os.environ
+    ):
         return None
 
     from aws_cdk import BundlingOptions, DockerImage, ILocalBundling
