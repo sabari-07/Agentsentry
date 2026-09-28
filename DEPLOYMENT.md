@@ -97,19 +97,40 @@ Notes on the Lambda bundling (already handled in `infra/agentsentry/stack.py`):
 
 ---
 
-## Step 3 — Seed live incident data
+## Step 3 — Backend setup + configure GitHub for real PRs
 
-So the dashboard shows the story-driven incidents (resolved / PR-open / diagnosing):
-
-```bash
+```powershell
 cd ..\backend
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-
-# Seed the live DynamoDB table (force live mode for this one command):
-$env:USE_MOCK_DATA="false"; python scripts\seed_incidents.py
+copy config\.env.example config\.env
 ```
+
+Fill in `backend/config/.env`:
+
+```
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+USE_MOCK_DATA=false
+
+# Required for the pipeline to open REAL remediation PRs:
+GITHUB_TOKEN=<classic PAT with 'repo' scope>
+GITHUB_REPO=<your-user>/<your-repo>
+GITHUB_BASE_BRANCH=main
+```
+
+Verify both credentials sets before deploying:
+
+```powershell
+python scripts\verify_credentials.py   # confirms AWS account
+python scripts\verify_github.py        # confirms token + repo access
+```
+
+> The CDK reads the GitHub values from `config/.env` at synth time and sets them as Lambda
+> environment variables, so the token is never committed. Use a short-lived token and revoke it
+> after the hackathon. (For production, use AWS Secrets Manager instead.)
 
 Verify the API is live:
 
@@ -117,6 +138,9 @@ Verify the API is live:
 curl https://6klp6vbzza.execute-api.us-east-1.amazonaws.com/api/health
 curl https://6klp6vbzza.execute-api.us-east-1.amazonaws.com/api/incidents
 ```
+
+*(Optional)* `python scripts\seed_incidents.py` writes illustrative demo incidents. Not needed —
+the live trigger in Step 7 produces genuine incidents.
 
 ---
 
@@ -169,14 +193,73 @@ To enable it:
 
 ---
 
-## Step 6 — Submission checklist (Builder Center)
+## Step 7 — Run the live demo (and capture every proof)
+
+This is the sequence to record for the demo video. Everything here is genuinely live: a real
+write burst causes real DynamoDB throttling, which fires a real CloudWatch alarm, which drives the
+agent pipeline. Nothing is seeded or faked.
+
+### The demo sequence
+
+```powershell
+cd backend
+$env:USE_MOCK_DATA="false"
+
+# 1. Start from a clean board (optional, makes the demo obvious)
+python scripts\clear_incidents.py
+
+# 2. Cause a REAL incident: burst writes against a 1-WCU table -> real throttling
+python scripts\trigger_incident.py
+#    -> prints e.g. "ok=779, throttled=21"  (real ProvisionedThroughputExceededException)
+
+# 3. Wait ~1-3 minutes for the CloudWatch alarm -> EventBridge -> incident Lambda.
+#    Refresh the dashboard: a new incident appears on its own, with a real diagnosis
+#    and a link to a real GitHub PR.
+
+# 4. Inspect what the pipeline produced
+python scripts\check_live.py     # incident, status, PR url, read-only audit calls
+python scripts\check_pr.py       # PR title/branch/files + body content checks
+
+# 5. Close the loop: verification re-reads the live metric (now recovered)
+python scripts\verify_now.py
+#    -> status: RESOLVED_VERIFIED, observed ThrottledRequests 0.0
+```
+
+On screen, the incident moves **Active → Open PR → Verified Resolution**, and the dashboard's
+read-only audit panel shows the exact API calls the agent made.
+
+### Capture these four proofs
+
+| Proof | Where to capture it |
+|---|---|
+| **1. Coding-agent connection** (required) | Kiro MCP panel showing `aws-mcp` connected, plus a session where the agent answers an AWS question with live data (e.g. lists your DynamoDB tables). |
+| **2. Ship Gate** | The live S3 dashboard URL open in an **incognito** window with incidents loaded. |
+| **3. Real remediation PR** | The GitHub PR page. It shows the branch, the committed `remediations/INC-*.md`, and a body containing the diagnosis, `cdk diff`, cost delta, and rollback plan. Example from a real run: `https://github.com/sabari-07/Agentsentry/pull/1` |
+| **4. Verified resolution** | The dashboard's **Verified Resolutions** card (metric + timestamp), and/or the `verify_now.py` output showing `RESOLVED_VERIFIED` with the observed metric value. |
+
+### Optional: CloudTrail read-only evidence ($0)
+
+To show the agent only ever *inspected* AWS:
+
+1. AWS Console → **CloudTrail** → **Event history** (free; no trail, no S3 bucket, no data events).
+2. Filter by **User name** = the Lambda role / `agentsentry-agent`, over the incident's time window.
+3. Screenshot the result: every event is `Describe*` / `Get*` / `List*` — no mutating calls.
+
+The dashboard's **Read-only audit** view shows the same evidence in-product.
+
+---
+
+## Step 8 — Submission checklist (Builder Center)
 
 - [ ] Live S3 website URL works in incognito with incidents loading (Ship Gate).
 - [ ] AWS MCP connection screenshot attached (agent connected + returning live AWS data).
+- [ ] Real remediation PR link/screenshot (diagnosis + `cdk diff` + cost delta + rollback).
+- [ ] Verified resolution screenshot (`RESOLVED_VERIFIED` with the observed metric + timestamp).
+- [ ] *(Optional)* CloudTrail Event history screenshot showing only read-only calls.
 - [ ] Category tag `#workplace-efficiency` + lane tag `#startups`.
 - [ ] Write-up covers: what it does, your dev process, how the coding agent
       helped, category + lane, and the live URL.
-- [ ] Demo video showing incident → PR → merge → verified resolution.
+- [ ] Demo video showing incident → PR → verified resolution.
 - [ ] Original app, not previously published.
 
 Deadline: **October 2**.
