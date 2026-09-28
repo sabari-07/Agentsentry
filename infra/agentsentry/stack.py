@@ -42,6 +42,13 @@ BACKEND_DIR = str((Path(__file__).resolve().parents[2] / "backend").as_posix())
 # runtime which store to read.
 LLM_SECRET_NAME = "/agentsentry/llm"
 
+# Date the stored inference credentials are deleted automatically. Hackathon
+# winners are announced the week of 19 Oct 2026 and the rules allow AWS to extend
+# that while verifying eligibility, so this leaves a deliberate buffer. After
+# this date the reasoning layer disables itself and the deterministic diagnosis
+# takes over.
+LLM_CREDENTIAL_EXPIRY = "2026-10-31"
+
 
 class AgentSentryStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
@@ -185,6 +192,42 @@ class AgentSentryStack(Stack):
             integration=apigw_integrations.HttpLambdaIntegration(
                 "ApiIntegration", handler=api_fn
             ),
+        )
+
+        # --- Scheduled credential expiry -------------------------------- #
+        # Inference credentials are only needed while the project is judged.
+        # This deletes them on LLM_CREDENTIAL_EXPIRY so they are not left in the
+        # account indefinitely; the reasoning layer then falls back to the
+        # deterministic path on its own.
+        expiry_fn = lambda_.Function(
+            self,
+            "CredentialExpiryFunction",
+            function_name="agentsentry-credential-expiry",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="lambda_credential_expiry.handler",
+            code=code,
+            memory_size=128,
+            timeout=Duration.seconds(30),
+            environment={
+                "LLM_SECRET_NAME": LLM_SECRET_NAME,
+                "LLM_CREDENTIAL_EXPIRY": LLM_CREDENTIAL_EXPIRY,
+            },
+        )
+        for statement in _llm_credential_delete_policies(self.region, self.account):
+            expiry_fn.add_to_role_policy(statement)
+
+        # Daily rather than a single one-off schedule: the handler compares the
+        # date itself, so this survives redeploys and is safely idempotent.
+        events.Rule(
+            self,
+            "CredentialExpiryRule",
+            rule_name="agentsentry-credential-expiry",
+            description=(
+                "Daily check that deletes the stored LLM inference credentials "
+                f"on or after {LLM_CREDENTIAL_EXPIRY}."
+            ),
+            schedule=events.Schedule.cron(minute="0", hour="3"),
+            targets=[targets.LambdaFunction(expiry_fn)],
         )
 
         # --- CloudWatch alarm on the monitored table's throttling ---
@@ -422,6 +465,23 @@ def _llm_secret_read_policies(region: str, account: str) -> list:
         ),
     ]
     return statements
+
+
+def _llm_credential_delete_policies(region: str, account: str) -> list:
+    """Allow deleting only the LLM credentials, from either supported store."""
+    from aws_cdk import aws_iam as iam
+
+    parameter_name = LLM_SECRET_NAME.lstrip("/")
+    return [
+        iam.PolicyStatement(
+            actions=["ssm:DeleteParameter"],
+            resources=[f"arn:aws:ssm:{region}:{account}:parameter/{parameter_name}"],
+        ),
+        iam.PolicyStatement(
+            actions=["secretsmanager:DeleteSecret"],
+            resources=[f"arn:aws:secretsmanager:{region}:{account}:secret:{parameter_name}-*"],
+        ),
+    ]
 
 
 def _dynamodb_describe_policy(table_arn: str):

@@ -30,10 +30,23 @@ def _template() -> Template:
 
 
 def _alarm_rule(template: Template) -> dict:
+    """Return the alarm-routing rule specifically.
+
+    The stack contains more than one EventBridge rule (the scheduled credential
+    expiry is the other), so select by name rather than taking the first match.
+    """
     rules = template.find_resources("AWS::Events::Rule")
     assert rules, "expected an EventBridge rule routing alarms to the handler"
-    # There is a single rule in this stack; return its properties.
-    return next(iter(rules.values()))["Properties"]
+    matches = [
+        resource["Properties"]
+        for resource in rules.values()
+        if resource["Properties"].get("Name") == "agentsentry-alarm-to-incident"
+    ]
+    assert len(matches) == 1, (
+        "expected exactly one alarm-to-incident rule, found "
+        f"{len(matches)} among {len(rules)} rule(s)"
+    )
+    return matches[0]
 
 
 def test_rule_listens_to_cloudwatch_alarm_state_changes():
@@ -79,3 +92,55 @@ def test_incident_handler_can_read_metrics_and_describe_tables():
 
     assert "cloudwatch:GetMetricStatistics" in actions
     assert "dynamodb:DescribeTable" in actions
+
+
+# --------------------------------------------------------------------------- #
+# Scheduled credential expiry
+# --------------------------------------------------------------------------- #
+def _expiry_rule(template: Template) -> dict:
+    rules = template.find_resources("AWS::Events::Rule")
+    matches = [
+        resource["Properties"]
+        for resource in rules.values()
+        if resource["Properties"].get("Name") == "agentsentry-credential-expiry"
+    ]
+    assert len(matches) == 1, "expected exactly one credential-expiry rule"
+    return matches[0]
+
+
+def test_credential_expiry_runs_on_a_schedule_not_an_event_pattern():
+    rule = _expiry_rule(_template())
+    assert "ScheduleExpression" in rule
+    # Daily, so the handler's own date comparison decides when to act.
+    assert rule["ScheduleExpression"].startswith("cron(")
+    assert "EventPattern" not in rule
+
+
+def test_credential_expiry_lambda_can_only_delete_the_llm_credential():
+    """The delete grant must not extend to other parameters or secrets."""
+    template = _template()
+    statements = [
+        statement
+        for policy in template.find_resources("AWS::IAM::Policy").values()
+        for statement in policy["Properties"]["PolicyDocument"]["Statement"]
+    ]
+    deletes = [
+        s for s in statements
+        if "ssm:DeleteParameter" in str(s.get("Action")) 
+        or "secretsmanager:DeleteSecret" in str(s.get("Action"))
+    ]
+    assert deletes, "expected a delete grant for the LLM credential"
+    for statement in deletes:
+        resources = str(statement["Resource"])
+        assert "agentsentry/llm" in resources, f"delete grant is too broad: {resources}"
+        assert resources.count("*") <= 1, f"wildcard delete grant: {resources}"
+
+
+def test_expiry_date_is_after_the_winner_announcement():
+    """Winners are announced the week of 19 Oct 2026; expiry must follow it."""
+    from datetime import date
+
+    from agentsentry.stack import LLM_CREDENTIAL_EXPIRY
+
+    expiry = date.fromisoformat(LLM_CREDENTIAL_EXPIRY)
+    assert expiry > date(2026, 10, 24), "expiry must leave room for judging to finish"
