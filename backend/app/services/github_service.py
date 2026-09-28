@@ -82,6 +82,8 @@ class GitHubService:
         audit_calls: list | None = None,
         docs: list | None = None,
         changed_files: list[str] | None = None,
+        reasoned_by_model: bool = False,
+        confidence: str = "",
     ) -> str:
         """Compose a detailed, reviewable incident report as the PR description."""
         delta = cost_delta.difference_usd
@@ -142,6 +144,15 @@ class GitHubService:
 
         # --- The fix ---
         fix = ["### 5. The fix in this pull request\n"]
+        if reasoned_by_model:
+            fix.append(
+                "> The root cause and this recommendation were reasoned by a model over the "
+                "read-only evidence above"
+                + (f" (confidence: **{confidence}**)" if confidence else "")
+                + ". The model selects from a fixed set of permitted actions and must name the "
+                "same resource the alarm named; the source edit itself is applied "
+                "deterministically. It cannot author arbitrary code.\n"
+            )
         if why_this_fix:
             fix.append(why_this_fix + "\n")
         if changed_files:

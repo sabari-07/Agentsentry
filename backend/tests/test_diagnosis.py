@@ -1,8 +1,12 @@
 """Tests for the deterministic diagnosis engine.
 
-The remediation decision is deliberately not made by a language model: the same
-observed state must always produce the same, reviewable recommendation. These
-tests pin that behaviour, including the cost arithmetic quoted in every PR.
+These tests pin the **deterministic** diagnosis, which is the fallback whenever
+the reasoning model is unconfigured, unreachable, or returns something that
+fails validation. The same observed state must always produce the same
+reviewable recommendation, including the cost arithmetic quoted in every PR.
+
+The model's own behaviour, and the guardrails constraining it, are covered in
+test_reasoning.py.
 """
 from __future__ import annotations
 

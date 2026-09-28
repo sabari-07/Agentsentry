@@ -32,6 +32,11 @@ from constructs import Construct
 # Path to the backend package that becomes the Lambda deployment bundle.
 BACKEND_DIR = str((Path(__file__).resolve().parents[2] / "backend").as_posix())
 
+# Secrets Manager secret that carries the LLM inference credentials, region and
+# model id. Deliberately separate from the application's own AWS identity so the
+# model entitlement can live in a different account.
+LLM_SECRET_NAME = "agentsentry/llm"
+
 
 class AgentSentryStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
@@ -94,6 +99,9 @@ class AgentSentryStack(Stack):
             # Public dashboard can be hosted on any origin (S3/CloudFront), so
             # allow all origins. The API is read-oriented and unauthenticated.
             "CORS_ORIGINS": "*",
+            # Secrets Manager secret holding inference-only credentials, region
+            # and model id. Empty/absent simply disables the reasoning layer.
+            "LLM_SECRET_NAME": LLM_SECRET_NAME,
             # GitHub config for opening real remediation PRs. Read from the local
             # backend/config/.env at synth time so the token is never committed.
             **_github_env(),
@@ -132,6 +140,9 @@ class AgentSentryStack(Stack):
         # Needs to inspect the monitored table + read CloudWatch metrics (read-only).
         monitored_table.grant_read_data(incident_fn)
         incident_fn.add_to_role_policy(_dynamodb_describe_policy(monitored_table.table_arn))
+        # Read the inference credentials only. Scoped to this one secret name so
+        # the incident Lambda cannot enumerate or read anything else.
+        incident_fn.add_to_role_policy(_llm_secret_read_policy(self.region, self.account))
         incident_fn.add_to_role_policy(_cloudwatch_read_policy())
 
         # --- Verification Lambda: re-checks the metric post-deploy ---
@@ -378,6 +389,17 @@ def _github_env() -> dict:
             )
         return {}
     return {"GITHUB_TOKEN": token, "GITHUB_REPO": repo, "GITHUB_BASE_BRANCH": base}
+
+
+def _llm_secret_read_policy(region: str, account: str):
+    """Allow reading just the LLM credentials secret, nothing else."""
+    from aws_cdk import aws_iam as iam
+
+    return iam.PolicyStatement(
+        actions=["secretsmanager:GetSecretValue"],
+        # Secrets Manager appends a random 6-character suffix to the ARN.
+        resources=[f"arn:aws:secretsmanager:{region}:{account}:secret:{LLM_SECRET_NAME}-*"],
+    )
 
 
 def _dynamodb_describe_policy(table_arn: str):

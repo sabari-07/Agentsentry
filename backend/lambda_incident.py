@@ -86,7 +86,8 @@ def handler(event: dict, _context) -> dict:
         facts["docs"] = docs
         logger.info("Consulted %d AWS documentation source(s) via MCP", len(docs))
 
-        diagnosis, pr = container.diagnosis.diagnose(resource_id, facts)
+        facts["resource_type"] = incident.resource_type
+        diagnosis, pr = container.diagnosis.diagnose(resource_id, facts, alarm)
         incident.diagnosis = diagnosis
         incident.audit_calls = facts["audit_calls"]
 
@@ -201,6 +202,8 @@ def _maybe_open_pr(container, incident, pr, diagnosis: str, facts: dict, repo: s
         audit_calls=incident.audit_calls,
         docs=facts.get("docs"),
         changed_files=[iac_path, report_path],
+        reasoned_by_model=bool(narrative.get("reasoned_by_model")),
+        confidence=narrative.get("confidence", ""),
     )
     # Build the reviewable evidence report that accompanies the real IaC edit.
     file_content = (

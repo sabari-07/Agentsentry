@@ -14,6 +14,7 @@ from app.services import (
     GitHubService,
     IncidentStore,
     McpDocsService,
+    ReasoningService,
     VerificationService,
 )
 from config import Settings, get_settings
@@ -29,7 +30,10 @@ class Container:
         self.cloudtrail = CloudTrailService(settings)
         self.github = GitHubService(settings)
         self.mcp_docs = McpDocsService(settings)
-        self.diagnosis = DiagnosisService(settings, self.cloudwatch, self.mcp_docs)
+        self.reasoning = ReasoningService(settings)
+        self.diagnosis = DiagnosisService(
+            settings, self.cloudwatch, self.mcp_docs, self.reasoning
+        )
         self.verification = VerificationService(
             settings, self.incident_store, self.cloudwatch, self.github
         )

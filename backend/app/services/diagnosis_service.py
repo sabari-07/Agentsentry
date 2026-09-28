@@ -16,20 +16,28 @@ from config import Settings
 
 from .cloudwatch_service import CloudWatchService
 from .mcp_service import McpDocsService
+from .reasoning_service import ReasoningService
 
 logger = logging.getLogger("agentsentry.diagnosis")
 
 
 class DiagnosisService:
+    # Class-level default so the deterministic path is the behaviour whenever a
+    # reasoning service was never wired in — including instances built without
+    # __init__ in tests.
+    _reasoning = None
+
     def __init__(
         self,
         settings: Settings,
         cloudwatch: CloudWatchService,
         docs: "McpDocsService | None" = None,
+        reasoning: "ReasoningService | None" = None,
     ) -> None:
         self._settings = settings
         self._cw = cloudwatch
         self._docs = docs
+        self._reasoning = reasoning
         self._ddb = None if settings.use_mock_data else self._init_ddb()
 
     def consult_documentation(self, facts: dict) -> list[dict]:
@@ -111,8 +119,69 @@ class DiagnosisService:
             "audit_calls": calls,
         }
 
-    def diagnose(self, table_name: str, facts: dict) -> tuple[str, PullRequest | None]:
-        """Produce a diagnosis string + a proposed CDK fix from observed facts."""
+    def diagnose(
+        self, table_name: str, facts: dict, alarm=None
+    ) -> tuple[str, PullRequest | None]:
+        """Diagnose the incident, preferring LLM analysis over the coded rules.
+
+        The deterministic result is produced first and always stands on its own.
+        When reasoning is configured, the model re-examines the same measured
+        evidence; its narrative replaces the templated prose, and it may withdraw
+        the pull request by judging that no safe automated fix applies. It cannot
+        introduce a fix the rules don't already know how to apply safely.
+        """
+        diagnosis, pr = self._deterministic_diagnose(table_name, facts)
+        if self._reasoning is None or alarm is None:
+            return diagnosis, pr
+        return self._apply_reasoning(table_name, facts, alarm, diagnosis, pr)
+
+    def _apply_reasoning(
+        self, table_name: str, facts: dict, alarm, diagnosis: str, pr: "PullRequest | None"
+    ) -> tuple[str, "PullRequest | None"]:
+        """Overlay validated model analysis onto the deterministic result."""
+        decision = self._reasoning.analyze(
+            resource_id=table_name,
+            resource_type=facts.get("resource_type", "AWS::DynamoDB::Table"),
+            metric_name=getattr(alarm, "metric_name", ""),
+            namespace=getattr(alarm, "namespace", ""),
+            threshold=float(getattr(alarm, "threshold", 0) or 0),
+            facts=facts,
+            docs=facts.get("docs"),
+        )
+        if decision is None:
+            logger.info("No usable model decision; keeping deterministic diagnosis.")
+            return diagnosis, pr
+
+        narrative = facts.setdefault("_narrative", {})
+        narrative["reasoned_by_model"] = True
+        narrative["confidence"] = decision.confidence
+        if decision.impact:
+            narrative["impact"] = decision.impact
+        narrative["why_this_fix"] = decision.reasoning
+        if decision.rejected_alternatives:
+            rows = "\n".join(f"| {item} |" for item in decision.rejected_alternatives)
+            narrative["alternatives"] = f"| Option and why it was rejected |\n| --- |\n{rows}"
+
+        reasoned = (
+            f"{decision.root_cause}\n\n{decision.reasoning}\n\n"
+            f"_Analysis by the reasoning model over read-only evidence; "
+            f"confidence: **{decision.confidence}**._"
+        )
+
+        if not decision.proposes_change:
+            logger.info(
+                "Model judged no safe automated fix (action=%s, confidence=%s); "
+                "recording analysis without a pull request.",
+                decision.action, decision.confidence,
+            )
+            return reasoned, None
+
+        return reasoned, pr
+
+    def _deterministic_diagnose(
+        self, table_name: str, facts: dict
+    ) -> tuple[str, PullRequest | None]:
+        """Rule-based diagnosis from observed facts. Always available."""
         billing = facts["billing_mode"]
         throttled = facts["throttled_15m"]
 

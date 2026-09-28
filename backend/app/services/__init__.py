@@ -5,6 +5,7 @@ from .diagnosis_service import DiagnosisService
 from .github_service import GitHubService
 from .incident_store import IncidentStore
 from .mcp_service import McpDocsService
+from .reasoning_service import ReasoningDecision, ReasoningService
 from .verification_service import VerificationService
 
 __all__ = [
@@ -14,5 +15,7 @@ __all__ = [
     "GitHubService",
     "IncidentStore",
     "McpDocsService",
+    "ReasoningDecision",
+    "ReasoningService",
     "VerificationService",
 ]
