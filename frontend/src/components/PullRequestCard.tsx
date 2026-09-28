@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Incident } from "../types/incident";
 import { money, relativeTime } from "../utils/format";
+import { AlarmSignal } from "./AlarmSignal";
 import { AuditPanel } from "./AuditPanel";
 import { CdkDiff } from "./CdkDiff";
 import { IconCheck, IconExternal } from "./icons";
@@ -77,6 +78,7 @@ export function PullRequestCard({ incident, onVerify, verifying }: Props) {
         <p className="section__text">{pr.rollback_plan}</p>
       </div>
 
+      <AlarmSignal incident={incident} />
       <AuditPanel calls={incident.audit_calls} />
 
       <div className="section">

@@ -1,5 +1,6 @@
 import type { Incident } from "../types/incident";
 import { formatTime, relativeTime } from "../utils/format";
+import { AlarmSignal } from "./AlarmSignal";
 import { AuditPanel } from "./AuditPanel";
 import { IconExternal } from "./icons";
 
@@ -46,6 +47,7 @@ export function ResolvedCard({ incident }: Props) {
         </div>
       )}
 
+      <AlarmSignal incident={incident} />
       <AuditPanel calls={incident.audit_calls} />
     </div>
   );

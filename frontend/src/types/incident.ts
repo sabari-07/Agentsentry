@@ -51,6 +51,11 @@ export interface Incident {
   resource_id: string;
   resource_type: string;
   metric_name: string;
+  /** Metric identity captured from the CloudWatch alarm that fired. */
+  metric_namespace?: string | null;
+  metric_dimensions?: Record<string, string>;
+  metric_statistic?: string | null;
+  alarm_name?: string | null;
   severity: Severity;
   status: IncidentStatus;
   diagnosis: string | null;

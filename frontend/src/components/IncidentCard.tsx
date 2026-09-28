@@ -1,5 +1,6 @@
 import type { Incident } from "../types/incident";
 import { relativeTime } from "../utils/format";
+import { AlarmSignal } from "./AlarmSignal";
 import { AuditPanel } from "./AuditPanel";
 
 interface Props {
@@ -34,6 +35,7 @@ export function IncidentCard({ incident }: Props) {
         )}
       </div>
 
+      <AlarmSignal incident={incident} />
       <AuditPanel calls={incident.audit_calls} />
     </div>
   );
