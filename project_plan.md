@@ -19,8 +19,11 @@ It uses the **Agent Toolkit for AWS** in two distinct places, and the distinctio
 - **At development time:** the coding agent (Kiro) is connected to the account through the **AWS MCP Server** and was used to build, inspect and debug the system against live AWS.
 - **At runtime:** the incident Lambda calls the **AWS MCP Server endpoint directly** (SigV4-signed HTTPS) to query the `aws___search_documentation` tool, so every proposed fix cites current AWS documentation. Live resource inspection itself is done with the AWS SDK (boto3) using read-only APIs.
 
+**Scope:** detection is **account-wide** — the EventBridge rule matches any CloudWatch alarm entering `ALARM`, and the handler reads the affected resource, metric, statistic and full dimension set from the alarm payload rather than a hardcoded name. Resource identification covers DynamoDB, Lambda, API Gateway (v1/v2), RDS, SQS and ECS; remediation rules currently cover the AgentSentry demo's DynamoDB throttling path, with other services detection-only. `RESOURCE_REPO_MAP` can route a pull request, but a mapped repository must use the supported CDK layout and provide its own deployment/verification integration.
+
 When an incident occurs, AgentSentry AI:
 
+- Identifies the affected resource **from the alarm payload** (namespace, metric, statistic, dimensions) — nothing about the resource is hardcoded.
 - Performs a **read-only** inspection of the affected resource and its live CloudWatch metrics (`DescribeTable`, `GetMetricStatistics`).
 - **Consults live AWS documentation through the AWS MCP Server (Agent Toolkit)** and cites the sources it used.
 - Proposes an **Infrastructure as Code (AWS CDK)** fix by automatically opening a **GitHub Pull Request** with a diagnosis, `cdk diff`, cost delta, alternatives considered, and rollback notes.
@@ -312,15 +315,16 @@ GitHub Pull Request. You never apply changes directly.
 
 ### Step 8: Post-Merge Verification (the winning moment)
 
-When a human merges the remediation PR, the `Verify Remediation` GitHub Actions workflow fires on the
-`pull_request: closed` event, extracts the incident ID from the PR, and calls the public verification
-endpoint. The verification handler re-reads the live CloudWatch metric over a 5-minute window and
-records `RESOLVED_VERIFIED` (or `FAILED`) with the observed value and timestamp, then **comments that
-measured outcome back on the merged PR** and surfaces it on the dashboard.
+When a human merges the remediation PR, the `Verify Remediation` workflow first runs its CDK deploy
+job when `AWS_DEPLOY_ROLE_ARN` is configured. Only after that deployment succeeds does it call the
+public verification endpoint. The verification handler re-reads the live CloudWatch metric over a
+5-minute window, records `RESOLVED_VERIFIED` (or `FAILED`) with the observed value and timestamp,
+then **comments that measured outcome back on the merged PR** and surfaces it on the dashboard.
 
-This requires **no AWS credentials in CI** — the verification API is a public HTTPS endpoint. An
-optional deploy job re-runs `cdk deploy` on merge, and is skipped automatically unless the
-`AWS_DEPLOY_ROLE_ARN` secret is configured.
+The deploy job authenticates with a short-lived GitHub OIDC token; the role's trust policy remains
+the AWS authorization boundary. If no deploy role is configured, merge does not trigger premature
+verification: deploy manually, then run `workflow_dispatch` with the incident ID. The manual
+verification call itself needs no AWS credentials because it uses the public HTTPS endpoint.
 
 Capture this end-to-end loop (incident → PR → merge → verified resolution + PR comment) in your demo
 video.

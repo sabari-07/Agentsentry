@@ -79,7 +79,8 @@ class Settings(BaseSettings):
         """Repository that owns the IaC for ``resource_id``.
 
         Uses RESOURCE_REPO_MAP when the resource is listed, otherwise the default
-        GITHUB_REPO. This is what lets a single deployment serve several projects.
+        GITHUB_REPO. This routes the pull request only; each mapped repository
+        must use the supported IaC layout and own its deployment integration.
         """
         for pair in self.resource_repo_map.split(","):
             pair = pair.strip()

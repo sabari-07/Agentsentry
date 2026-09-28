@@ -73,15 +73,21 @@ class AgentSentryStack(Stack):
         # falls back to a local bundler when Docker is unavailable.
         from aws_cdk import AssetHashType
 
-        code = lambda_.Code.from_asset(
-            BACKEND_DIR,
-            exclude=[".venv", "__pycache__", "*.pyc", "config/.env", "tests", "cdk.out*"],
-            bundling=_bundling_options(),
-            # Hash the bundled OUTPUT, not the source. The dependencies (and thus
-            # the Linux wheels) are produced by bundling, so output-based hashing
-            # ensures CDK detects the change and updates the Lambda.
-            asset_hash_type=AssetHashType.OUTPUT,
-        )
+        bundling = _bundling_options()
+        exclude = [".venv", "__pycache__", "*.pyc", "config/.env", "tests", "cdk.out*"]
+        if bundling is None:
+            # Test path: no dependency install, so hash the source instead.
+            code = lambda_.Code.from_asset(BACKEND_DIR, exclude=exclude)
+        else:
+            code = lambda_.Code.from_asset(
+                BACKEND_DIR,
+                exclude=exclude,
+                bundling=bundling,
+                # Hash the bundled OUTPUT, not the source. The dependencies (and
+                # thus the Linux wheels) are produced by bundling, so output-based
+                # hashing ensures CDK detects the change and updates the Lambda.
+                asset_hash_type=AssetHashType.OUTPUT,
+            )
         common_env = {
             "USE_MOCK_DATA": "false",
             "INCIDENT_TABLE_NAME": incident_table.table_name,
@@ -191,18 +197,29 @@ class AgentSentryStack(Stack):
             treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
         )
 
-        # --- EventBridge: on alarm -> ALARM state, invoke the incident Lambda ---
+        # --- EventBridge: ANY alarm in the account entering ALARM ---
+        #
+        # Deliberately not filtered to a single alarm. The incident handler reads
+        # the affected resource, metric and dimension set from the alarm payload,
+        # so every CloudWatch alarm in the account routes through the same code
+        # path. Resource identification covers DynamoDB, Lambda, API Gateway
+        # (v1/v2), RDS, SQS and ECS; anything else is still recorded as an
+        # incident for visibility but receives no automated diagnosis.
+        #
+        # Production note: a busy account would want this narrowed (by alarm name
+        # prefix or tag) so routine alarm flaps don't each open an incident.
         alarm_rule = events.Rule(
             self,
             "AlarmToIncidentRule",
             rule_name="agentsentry-alarm-to-incident",
+            description=(
+                "Routes any CloudWatch alarm entering ALARM to the AgentSentry "
+                "incident handler, which identifies the resource from the payload."
+            ),
             event_pattern=events.EventPattern(
                 source=["aws.cloudwatch"],
                 detail_type=["CloudWatch Alarm State Change"],
-                detail={
-                    "alarmName": [throttle_alarm.alarm_name],
-                    "state": {"value": ["ALARM"]},
-                },
+                detail={"state": {"value": ["ALARM"]}},
             ),
         )
         alarm_rule.add_target(targets.LambdaFunction(incident_fn))
@@ -222,10 +239,18 @@ def _bundling_options():
     Uses a local bundler (no Docker needed) that copies the source and installs
     requirements into the asset staging directory. Falls back to the standard
     Docker-based pip install if local bundling is unavailable.
+
+    Set ``AGENTSENTRY_SKIP_BUNDLE=1`` to skip dependency installation. Unit tests
+    that only assert on the synthesised template use this so they don't pay for a
+    full pip install per synth; deploys never set it.
     """
+    import os
     import shutil
     import subprocess
     from pathlib import Path
+
+    if os.environ.get("AGENTSENTRY_SKIP_BUNDLE") == "1":
+        return None
 
     from aws_cdk import BundlingOptions, DockerImage, ILocalBundling
     import jsii

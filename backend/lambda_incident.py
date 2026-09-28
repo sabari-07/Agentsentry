@@ -18,6 +18,7 @@ Nothing about the outcome is hardcoded: the diagnosis reflects live data.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from app.core import configure_logging, get_container
@@ -93,8 +94,17 @@ def handler(event: dict, _context) -> dict:
             # Route the pull request to whichever repo owns this resource's IaC.
             repo = settings.repo_for_resource(resource_id)
             created = _maybe_open_pr(container, incident, pr, diagnosis, facts, repo)
-            incident.pull_request = created or pr
-            incident.status = IncidentStatus.PR_OPEN
+            if created is not None:
+                incident.pull_request = created
+                incident.status = IncidentStatus.PR_OPEN
+            else:
+                # Never label a report-only proposal or a failed GitHub write as
+                # an open remediation PR. The diagnosis remains visible while
+                # the incident stays in DIAGNOSING for human attention.
+                logger.warning(
+                    "No actionable PR was opened for incident %s; status remains DIAGNOSING.",
+                    incident.id,
+                )
         incident.updated_at = datetime.now(timezone.utc)
         container.incident_store.save_incident(incident)
         logger.info("Incident %s diagnosed -> %s", incident.id, incident.status.value)
@@ -116,6 +126,45 @@ def _title_for(alarm, resource_id: str) -> str:
     return f"{service} {friendly} on {resource_id}"
 
 
+def _switch_table_to_on_demand(source: str, table_name: str) -> str:
+    """Change only the named CDK DynamoDB table to on-demand billing.
+
+    The physical table name comes from the CloudWatch alarm payload. The
+    transformation is bounded to that table's ``dynamodb.Table`` declaration,
+    so another provisioned table with identical capacities cannot be edited.
+    Source capacities are deliberately not compared with live capacities:
+    console drift is evidence for the report, not a safe source-code locator.
+    """
+    anchor = f'table_name="{table_name}",'
+    anchor_count = source.count(anchor)
+    if anchor_count != 1:
+        raise ValueError(
+            f"Expected table name {table_name!r} exactly once in CDK source; "
+            f"found {anchor_count}"
+        )
+
+    anchor_index = source.index(anchor)
+    block_start = source.rfind("dynamodb.Table(", 0, anchor_index)
+    block_end = source.find("\n        )", anchor_index)
+    if block_start < 0 or block_end < 0:
+        raise ValueError(f"Could not bound the CDK table declaration for {table_name!r}")
+
+    block = source[block_start:block_end]
+    capacity_block = re.compile(
+        r"(?m)^ {12}billing_mode=dynamodb\.BillingMode\.PROVISIONED,\r?\n"
+        r"^ {12}read_capacity=[^\r\n]+,\r?\n"
+        r"^ {12}write_capacity=[^\r\n]+,"
+    )
+    replacement = "            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,"
+    transformed_block, replacements = capacity_block.subn(replacement, block)
+    if replacements != 1:
+        raise ValueError(
+            f"Expected one provisioned-capacity block for {table_name!r}; "
+            f"found {replacements}"
+        )
+    return source[:block_start] + transformed_block + source[block_end:]
+
+
 def _maybe_open_pr(container, incident, pr, diagnosis: str, facts: dict, repo: str):
     """Create a real remediation branch + commit + PR when GitHub is configured."""
     gh = container.github.for_repo(repo)
@@ -123,6 +172,19 @@ def _maybe_open_pr(container, incident, pr, diagnosis: str, facts: dict, repo: s
         logger.info("GitHub not configured for %s; recording proposed fix only.", repo)
         return None
 
+    # This diagnosis can only become an actionable PR when the agent knows the
+    # exact source transformation. For already-on-demand tables, the durable
+    # fix belongs in the owning application's write path, which cannot be
+    # inferred safely from an alarm payload; do not open a report-only PR.
+    if facts.get("billing_mode") != "PROVISIONED":
+        logger.warning(
+            "No deterministic repository edit for %s billing mode; not opening a PR.",
+            facts.get("billing_mode"),
+        )
+        return None
+
+    iac_path = "infra/agentsentry/stack.py"
+    report_path = f"remediations/{incident.id}.md"
     logger.info("Opening remediation PR against %s", repo)
     narrative = facts.get("_narrative", {})
     body = gh.build_pr_body(
@@ -138,9 +200,9 @@ def _maybe_open_pr(container, incident, pr, diagnosis: str, facts: dict, repo: s
         verification=narrative.get("verification", ""),
         audit_calls=incident.audit_calls,
         docs=facts.get("docs"),
+        changed_files=[iac_path, report_path],
     )
-    # Commit a real, reviewable remediation manifest tied to this incident.
-    file_path = f"remediations/{incident.id}.md"
+    # Build the reviewable evidence report that accompanies the real IaC edit.
     file_content = (
         f"# Incident report — {incident.id}\n\n"
         f"| Field | Value |\n| --- | --- |\n"
@@ -175,12 +237,20 @@ def _maybe_open_pr(container, incident, pr, diagnosis: str, facts: dict, repo: s
         + "\n\n---\n_Generated by AgentSentry AI from live read-only AWS inspection._\n"
     )
 
+    # Commit both the real CDK fix and its evidence report. The transformer
+    # reads the current base-branch IaC and changes only the table whose
+    # physical name came from the alarm payload. Stale or unfamiliar source
+    # fails closed instead of producing a misleading documentation-only PR.
     data = gh.create_remediation_pr(
         title=pr.title,
         branch=pr.branch,
         body=body,
-        file_path=file_path,
-        file_content=file_content,
+        file_contents={report_path: file_content},
+        file_transformers={
+            iac_path: lambda source: _switch_table_to_on_demand(
+                source, incident.resource_id
+            )
+        },
         commit_message=f"fix({incident.resource_id}): remediation for {incident.id}",
     )
     if data:

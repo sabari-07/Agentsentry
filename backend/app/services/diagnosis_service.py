@@ -247,7 +247,7 @@ class DiagnosisService:
             "and operational surface — disproportionate for this incident. |"
         )
         verification = (
-            "After merge, AgentSentry AI re-reads the live `ThrottledRequests` metric over a 5-minute "
+            "After deployment, AgentSentry AI re-reads the live `ThrottledRequests` metric over a 5-minute "
             "window and only records **RESOLVED_VERIFIED** if it has returned below threshold."
         )
         pr = PullRequest(

@@ -234,7 +234,7 @@ read-only audit panel shows the exact API calls the agent made.
 |---|---|
 | **1. Coding-agent connection** (required) | Kiro MCP panel showing `aws-mcp` connected, plus a session where the agent answers an AWS question with live data (e.g. lists your DynamoDB tables). |
 | **2. Ship Gate** | The live S3 dashboard URL open in an **incognito** window with incidents loaded. |
-| **3. Real remediation PR** | The GitHub PR page. It shows the branch, the committed `remediations/INC-*.md`, and a body containing the diagnosis, `cdk diff`, cost delta, and rollback plan. Example from a real run: `https://github.com/sabari-07/Agentsentry/pull/1` |
+| **3. Real remediation PR** | Open the PR's **Files changed** tab. It must show both the actual `infra/agentsentry/stack.py` change (`PROVISIONED` + fixed RCU/WCU → `PAY_PER_REQUEST`) and `remediations/INC-*.md`. The PR body must include diagnosis, `cdk diff`, cost delta, and rollback. PRs #1–#7 predate this upgrade and are report-only; do not use them as proof of a merge-ready fix. |
 | **4. Verified resolution** | The dashboard's **Verified Resolutions** card (metric + timestamp), and/or the `verify_now.py` output showing `RESOLVED_VERIFIED` with the observed metric value. |
 
 ### Optional: CloudTrail read-only evidence ($0)

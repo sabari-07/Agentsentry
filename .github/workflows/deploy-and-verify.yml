@@ -2,13 +2,10 @@ name: Verify Remediation
 
 # Closes the AgentSentry AI loop automatically.
 #
-# When a remediation pull request is MERGED, this workflow calls the public
-# verification endpoint for the incident that PR was raised for. The verification
-# handler re-reads the live CloudWatch metric and records RESOLVED_VERIFIED (or
-# FAILED) — then comments the measured outcome back on the merged PR.
-#
-# No AWS credentials are required for verification: the API is a public HTTPS
-# endpoint. An optional deploy job runs only if an AWS deploy role is configured.
+# When a remediation pull request is MERGED, the optional deploy job applies
+# the IaC change when an AWS deploy role is configured. Only after that job
+# succeeds does the workflow call the verification endpoint. For environments
+# that deploy manually, workflow_dispatch verifies after the operator deploys.
 
 on:
   # Automatic: fires when a PR is closed; the job below only proceeds if merged.
@@ -25,11 +22,23 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  # Required only when AWS_DEPLOY_ROLE_ARN is configured: lets the AWS
+  # credentials action request a short-lived GitHub OIDC token. It grants no
+  # AWS access by itself; the role trust policy remains the authorization gate.
+  id-token: write
 
 jobs:
   verify:
-    # Run on a real merge, or whenever triggered manually.
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    # A merged PR is verified only after its IaC deployment job completed.
+    # workflow_dispatch remains available after a deliberate/manual deployment.
+    needs: deploy
+    if: >-
+      ${{ always() && (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event.pull_request.merged == true &&
+         needs.deploy.result == 'success' &&
+         needs.deploy.outputs.enabled == 'true')
+      ) }}
     runs-on: ubuntu-latest
     steps:
       - name: Resolve incident id
@@ -86,6 +95,8 @@ jobs:
   deploy:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
     steps:
       - name: Check for AWS deploy role
         id: gate

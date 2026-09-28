@@ -61,7 +61,29 @@ Deployed resources (via AWS CDK in `infra/`):
 - `agentsentry-api` — Lambda (FastAPI/Mangum) behind an HTTP API Gateway
 - `agentsentry-incident-handler` — Lambda invoked by EventBridge on a CloudWatch alarm
 - `agentsentry-verification-handler` — Lambda that runs the post-deploy verification loop
-- CloudWatch alarm on `ThrottledRequests` + EventBridge rule wiring it to the incident handler
+- CloudWatch alarm on `ThrottledRequests` + EventBridge rule wiring **any** account alarm to the
+  incident handler
+
+## Scope
+
+- **Detection is account-wide.** The EventBridge rule matches any CloudWatch alarm entering `ALARM`;
+  it is not pinned to one alarm or resource.
+- **Resource identification** reads the resource, namespace, metric, statistic and the metric's full
+  dimension set from the alarm payload, covering DynamoDB, Lambda, API Gateway (v1/v2), RDS, SQS and
+  ECS. Unrecognised namespaces are still recorded, just without an automated diagnosis.
+- **Remediation rules** currently cover DynamoDB throttling; other services are detection-only.
+- **It only sees what you alarm on** — there is no auto-discovery of unmonitored resources.
+- **Per-resource repository routing** via `RESOURCE_REPO_MAP` chooses the PR destination. The current
+  concrete transformer expects `infra/agentsentry/stack.py`; a mapped repository needs that supported
+  layout plus its own deployment and verification integration. Routing alone is not multi-project
+  deployment.
+
+## Tests
+
+```bash
+cd backend && pytest        # 67 tests: metrics, verification, diagnosis, MCP, PR report, routing
+cd infra   && pytest        # 5 tests: EventBridge scope and IAM permissions on the synthesised stack
+```
 
 ## Project structure
 

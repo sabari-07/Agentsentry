@@ -6,6 +6,10 @@ import type { Incident } from "../types/incident";
 const REPO = "https://github.com/sabari-07/Agentsentry";
 const PR_DOCS = `${REPO}/pull/4`;
 const PR_PROOF = `${REPO}/pull/5`;
+/** The run that withheld certification: ThrottledRequests = 116. */
+const PROOF_WITHHELD = `${PR_PROOF}#issuecomment-5864794338`;
+/** The run that confirmed recovery: ThrottledRequests = 0. */
+const PROOF_CONFIRMED = `${PR_PROOF}#issuecomment-5864880540`;
 
 interface Props {
   onExit: () => void;
@@ -68,7 +72,7 @@ export function Judges({ onExit }: Props) {
 
       {/* The evidence chain */}
       <section className="judges__section">
-        <h2 className="judges__h2">1. One incident, seven steps, nothing staged</h2>
+        <h2 className="judges__h2">1. One incident, start to finish, nothing staged</h2>
         <p className="judges__p">
           This is a single real incident from this AWS account, start to finish. The only thing I
           staged is the opening write burst, which stands in for a traffic spike. Everything after it
@@ -95,7 +99,20 @@ export function Judges({ onExit }: Props) {
           >
             A CloudWatch alarm fired, EventBridge routed it, and the incident Lambda woke up. An
             incident appeared on the dashboard <b>without anyone touching it</b>. I did not create the
-            record, call an API, or paste anything in.
+            record, call an API, or paste anything in. The rule is not pinned to one alarm —{" "}
+            <b>any CloudWatch alarm in the account</b> enters this pipeline.
+          </Step>
+
+          <Step
+            n="2b"
+            title="It worked out what broke, from the alarm itself"
+            usually="The monitored resource is hardcoded, so it only ever handles one thing."
+            proof="The 'Detected from CloudWatch alarm' panel on every card"
+          >
+            The handler reads the <b>resource, namespace, metric, statistic and the metric's full
+            dimension set</b> straight out of the alarm payload. Nothing about the resource is
+            hardcoded, so the same code path handles DynamoDB, Lambda, API Gateway, RDS, SQS and ECS.
+            You can see the exact payload it read on each card in the dashboard.
           </Step>
 
           <Step
@@ -131,11 +148,12 @@ export function Judges({ onExit }: Props) {
             usually="You get a dashboard, a summary, or a runbook to action yourself."
             proof="Up to 7,004 characters per PR"
           >
-            It created a branch, committed an incident report, and <b>opened a real GitHub pull
-            request</b> containing the diagnosis, a <code>cdk diff</code>, a cost delta
-            (<b>$0.57/mo → $0.00/mo</b>), the alternatives it considered <i>and why it rejected them</i>,
-            a rollback plan, and its own read-only audit trail. It is reviewable the way a colleague's
-            PR is reviewable.
+            It creates one atomic commit containing the <b>actual CDK source edit</b> — switching
+            <code>infra/agentsentry/stack.py</code> from fixed provisioned capacity to
+            <code>PAY_PER_REQUEST</code> — together with the incident report. The real GitHub pull
+            request also contains the diagnosis, a <code>cdk diff</code>, cost delta, alternatives,
+            rollback plan, and read-only audit trail. If the expected source block is missing or
+            changed, it refuses to open a report-only PR.
           </Step>
 
           <Step
@@ -145,54 +163,68 @@ export function Judges({ onExit }: Props) {
             proof="Merging is a GitHub action"
           >
             The agent <b>never merges and never applies a change</b>. It has no path to mutate
-            infrastructure. Nothing reaches the account unless a person clicks merge, which means the
-            blast radius of a bad suggestion is a rejected pull request.
+            infrastructure. A person must approve the PR, and the merged IaC must then be deployed by
+            the deployment pipeline. The blast radius of a bad suggestion is therefore a rejected
+            pull request, not an unreviewed AWS mutation.
           </Step>
 
           <Step
             n="7"
             title="Then it proved whether the fix worked"
             usually="The incident is closed on the assumption that it did."
-            proof="The two comments on PR #5"
+            proof="Verification comments on PR #5"
           >
-            After the merge it re-read the <b>live CloudWatch metric</b> and published the number it
+            After deployment it re-read the <b>live CloudWatch metric</b> and published the number it
             found. It records <code>RESOLVED_VERIFIED</code> only when the metric has genuinely
-            recovered — and <code>FAILED</code> when it hasn't. That last step is the whole point, and
-            section 2 below is the receipt.
+            recovered, and withholds certification when it hasn't. That last step is the whole point,
+            and section 2 below is the receipt.
           </Step>
         </ol>
       </section>
 
       {/* The proof */}
       <section className="judges__section">
-        <h2 className="judges__h2">2. The part that matters: it can fail, and it did</h2>
+        <h2 className="judges__h2">
+          2. The check is real: it refuses to certify a fix it cannot measure
+        </h2>
         <p className="judges__p">
-          A tool that only observes can never be wrong about an outcome. This one can be. Open{" "}
-          <a href={PR_PROOF} target="_blank" rel="noreferrer">
-            PR #5 <IconExternal size={11} />
-          </a>{" "}
-          and read the two verification comments in order:
+          A tool that only reports can never be wrong about an outcome. This one is accountable for
+          the outcome, so it has to be able to return a negative result. Here are two runs against
+          the same incident, each a link to the comment the agent published on the pull request:
         </p>
         <div className="proof">
           <div className="proof__row proof__row--fail">
-            <span className="proof__badge">❌ FAILED</span>
+            <span className="proof__badge">❌ WITHHELD</span>
             <span>
-              <code>ThrottledRequests</code> = <b>116</b> (threshold 1) — the metric was still
-              breaching, so the agent refused to certify the fix and said so on the PR.
+              <code>ThrottledRequests</code> = <b>116</b> (threshold 1) — still breaching, so the
+              agent <b>declined to certify the fix</b> and published that number.{" "}
+              <a href={PROOF_WITHHELD} target="_blank" rel="noreferrer">
+                Read the comment <IconExternal size={11} />
+              </a>
             </span>
           </div>
           <div className="proof__row proof__row--pass">
-            <span className="proof__badge">✅ VERIFIED</span>
+            <span className="proof__badge">✅ CONFIRMED</span>
             <span>
-              <code>ThrottledRequests</code> = <b>0</b> — the metric had genuinely recovered.
+              <code>ThrottledRequests</code> = <b>0</b> — the metric had genuinely recovered, so the
+              incident became <code>RESOLVED_VERIFIED</code>.{" "}
+              <a href={PROOF_CONFIRMED} target="_blank" rel="noreferrer">
+                Read the comment <IconExternal size={11} />
+              </a>
             </span>
           </div>
         </div>
         <p className="judges__note">
-          Those two comments exist because of a bug I found while trying to make the verification fail
-          on purpose: it was querying an incomplete CloudWatch dimension set, matching no metric, and
-          reporting "healthy" every time. A verification step that cannot fail is indistinguishable
-          from no verification at all.
+          Why this section exists: an earlier build of the verification queried an{" "}
+          <b>incomplete CloudWatch dimension set</b>, matched no metric, and therefore reported
+          "healthy" every single time. It could not fail, which made its successes meaningless. The
+          fix was to send the complete dimension set and aggregate with <code>Sum</code> rather than{" "}
+          <code>Maximum</code>, and there is now a regression test pinning both. If you scroll{" "}
+          <a href={PR_PROOF} target="_blank" rel="noreferrer">
+            the full comment history on PR #5 <IconExternal size={11} />
+          </a>
+          , the three earlier ✅ comments are that old build's false positives. They are left in place
+          deliberately: they are the reason the two comments above can be trusted.
         </p>
       </section>
 
@@ -223,7 +255,35 @@ export function Judges({ onExit }: Props) {
       </section>
 
       <section className="judges__section">
-        <h2 className="judges__h2">4. What it deliberately does not do</h2>
+        <h2 className="judges__h2">4. Scope, stated plainly</h2>
+        <ul className="judges__list">
+          <li>
+            <b>Detection is account-wide.</b> Any CloudWatch alarm entering <code>ALARM</code> routes
+            into the pipeline; nothing is pinned to a single alarm or resource.
+          </li>
+          <li>
+            <b>Resource identification covers 7 services</b> — DynamoDB, Lambda, API Gateway (v1 and
+            v2), RDS, SQS and ECS. An unrecognised namespace is still recorded as an incident for
+            visibility, it just receives no automated diagnosis.
+          </li>
+          <li>
+            <b>Remediation rules currently cover DynamoDB throttling.</b> That is the one failure mode
+            with a proven end-to-end fix; the others are detection-only today.
+          </li>
+          <li>
+            <b>It only sees what you alarm on.</b> There is no auto-discovery of unmonitored
+            resources, and I am not claiming any.
+          </li>
+          <li>
+            <b>Pull requests can route per resource.</b> A resource-to-repository map chooses the PR
+            destination. The current concrete transformer expects the supported AgentSentry CDK
+            layout; another repository must provide that layout and its own deployment integration.
+          </li>
+        </ul>
+      </section>
+
+      <section className="judges__section">
+        <h2 className="judges__h2">5. What it deliberately does not do</h2>
         <ul className="judges__list">
           <li>It never applies a change. It opens a pull request; merging is a human action.</li>
           <li>

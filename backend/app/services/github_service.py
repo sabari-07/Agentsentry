@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 import httpx
@@ -34,8 +35,9 @@ class GitHubService:
     # ------------------------------------------------------------------ #
     def __init__(self, settings: Settings, repo: str | None = None) -> None:  # noqa: D107
         self._settings = settings
-        # A per-resource repository override, so one deployment can raise pull
-        # requests against whichever repo owns the affected resource's IaC.
+        # A per-resource repository override for PR routing. A mapped target
+        # must use the supported IaC layout and provide its own deployment/
+        # verification integration; routing alone does not deploy another repo.
         self._repo = repo or settings.github_repo
 
     def for_repo(self, repo: str) -> "GitHubService":
@@ -79,6 +81,7 @@ class GitHubService:
         verification: str = "",
         audit_calls: list | None = None,
         docs: list | None = None,
+        changed_files: list[str] | None = None,
     ) -> str:
         """Compose a detailed, reviewable incident report as the PR description."""
         delta = cost_delta.difference_usd
@@ -93,8 +96,9 @@ class GitHubService:
             "## AgentSentry AI — automated remediation\n\n"
             "This pull request was opened automatically by **AgentSentry AI** after it detected a "
             "live infrastructure incident in AWS, inspected the affected resource **read-only**, "
-            "and derived the fix from the data it actually observed. No change has been applied — "
-            "this PR proposes the fix for human review."
+            "and derived the fix from the data it actually observed. The branch contains the "
+            "proposed source changes, but no change has been applied to AWS — a human must review "
+            "and merge this PR, then the merged infrastructure code must be deployed."
         )
 
         # --- Incident summary table ---
@@ -140,6 +144,10 @@ class GitHubService:
         fix = ["### 5. The fix in this pull request\n"]
         if why_this_fix:
             fix.append(why_this_fix + "\n")
+        if changed_files:
+            fix.append("The branch commits these reviewable files:\n")
+            fix.extend(f"- `{path}`" for path in changed_files)
+            fix.append("")
         fix.append("Proposed infrastructure change (`cdk diff`):\n")
         fix.append(f"```\n{cdk_diff}\n```")
         parts.append("\n".join(fix))
@@ -176,7 +184,7 @@ class GitHubService:
 
         # --- How to verify ---
         if verification:
-            parts.append(f"### 9. How this will be verified after merge\n\n{verification}")
+            parts.append(f"### 9. How this will be verified after deployment\n\n{verification}")
 
         # --- Rollback ---
         parts.append(f"### 10. Rollback plan\n\n{rollback}")
@@ -201,7 +209,8 @@ class GitHubService:
             "---\n"
             "**Safety model:** read-only by construction, human-in-the-loop by design. The agent "
             "only issued `Describe*` / `Get*` / `List*` calls and never mutated infrastructure. "
-            "Merging this PR is a human decision; the change is applied only after merge."
+            "Merging this PR is a human decision; AWS changes only after the merged infrastructure "
+            "code is deployed."
         )
 
         return "\n\n".join(parts)
@@ -261,56 +270,100 @@ class GitHubService:
         title: str,
         branch: str,
         body: str,
-        file_path: str,
-        file_content: str,
+        file_contents: dict[str, str],
+        file_transformers: dict[str, Callable[[str], str]],
         commit_message: str,
     ) -> dict | None:
-        """Create a branch, commit a real file change, and open a PR.
+        """Create one atomic remediation commit and open a pull request.
 
-        Returns the GitHub PR payload, or None if GitHub is not configured or the
-        flow fails (failures are logged and never raise into the caller).
+        ``file_contents`` contains new files such as the incident report.
+        ``file_transformers`` maps an existing repository path to a guarded
+        source transformation. Every transformer must return changed content;
+        otherwise the method fails closed rather than opening a PR that only
+        describes a fix.
         """
         if not self.configured:
             logger.info("GitHub not configured; skipping real PR creation.")
             return None
+        if not file_contents and not file_transformers:
+            logger.error("Refusing to open a remediation PR without file changes.")
+            return None
 
         base = self._settings.github_base_branch
-        # Make the branch unique so repeated incidents don't collide.
         unique_branch = f"{branch}-{int(datetime.now(timezone.utc).timestamp())}"
 
         try:
             with httpx.Client(timeout=30, headers=self._headers()) as client:
-                # 1. Head SHA of the base branch.
+                # Resolve the immutable base commit and its tree. Building the
+                # complete commit before creating the branch avoids a partially
+                # updated remediation branch if any file transformation fails.
                 ref = client.get(self._repo_url(f"/git/ref/heads/{base}"))
                 ref.raise_for_status()
                 base_sha = ref.json()["object"]["sha"]
 
-                # 2. Create the remediation branch.
+                commit = client.get(self._repo_url(f"/git/commits/{base_sha}"))
+                commit.raise_for_status()
+                base_tree_sha = commit.json()["tree"]["sha"]
+
+                resolved_contents = dict(file_contents)
+                for path, transform in file_transformers.items():
+                    source_response = client.get(
+                        self._repo_url(f"/contents/{path}"), params={"ref": base_sha}
+                    )
+                    source_response.raise_for_status()
+                    source_payload = source_response.json()
+                    if source_payload.get("encoding") != "base64":
+                        raise ValueError(f"Unsupported GitHub encoding for {path}")
+                    source = base64.b64decode(source_payload["content"]).decode("utf-8")
+                    transformed = transform(source)
+                    if transformed == source:
+                        raise ValueError(f"Remediation transformer made no change to {path}")
+                    resolved_contents[path] = transformed
+
+                # Git's data API lets the real IaC edit and its incident report
+                # land in a single commit, so reviewers never see half a fix.
+                tree_entries = []
+                for path, content in resolved_contents.items():
+                    blob = client.post(
+                        self._repo_url("/git/blobs"),
+                        json={"content": content, "encoding": "utf-8"},
+                    )
+                    blob.raise_for_status()
+                    tree_entries.append(
+                        {
+                            "path": path,
+                            "mode": "100644",
+                            "type": "blob",
+                            "sha": blob.json()["sha"],
+                        }
+                    )
+
+                tree = client.post(
+                    self._repo_url("/git/trees"),
+                    json={"base_tree": base_tree_sha, "tree": tree_entries},
+                )
+                tree.raise_for_status()
+
+                new_commit = client.post(
+                    self._repo_url("/git/commits"),
+                    json={
+                        "message": commit_message,
+                        "tree": tree.json()["sha"],
+                        "parents": [base_sha],
+                    },
+                )
+                new_commit.raise_for_status()
+                remediation_sha = new_commit.json()["sha"]
+
                 created = client.post(
                     self._repo_url("/git/refs"),
-                    json={"ref": f"refs/heads/{unique_branch}", "sha": base_sha},
+                    json={
+                        "ref": f"refs/heads/{unique_branch}",
+                        "sha": remediation_sha,
+                    },
                 )
                 created.raise_for_status()
 
-                # 3. Commit the file change on that branch (create or update).
-                existing_sha = None
-                probe = client.get(
-                    self._repo_url(f"/contents/{file_path}"), params={"ref": unique_branch}
-                )
-                if probe.status_code == 200:
-                    existing_sha = probe.json().get("sha")
-
-                payload = {
-                    "message": commit_message,
-                    "content": base64.b64encode(file_content.encode()).decode(),
-                    "branch": unique_branch,
-                }
-                if existing_sha:
-                    payload["sha"] = existing_sha
-                put = client.put(self._repo_url(f"/contents/{file_path}"), json=payload)
-                put.raise_for_status()
-
-                # 4. Open the PR.
                 pr = client.post(
                     self._repo_url("/pulls"),
                     json={"title": title, "head": unique_branch, "base": base, "body": body},
@@ -318,7 +371,10 @@ class GitHubService:
                 pr.raise_for_status()
                 data = pr.json()
 
-            logger.info("Opened PR #%s: %s", data["number"], data["html_url"])
+            logger.info(
+                "Opened PR #%s with %d changed files: %s",
+                data["number"], len(resolved_contents), data["html_url"],
+            )
             return data
         except httpx.HTTPStatusError as e:
             logger.error(
