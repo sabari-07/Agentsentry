@@ -67,6 +67,23 @@ per-incident **read-only audit trail** proving every agent call was `Describe*` 
   CloudTrail Event history).
 - **Reversible** — every PR carries a rollback plan.
 
+### Why the reasoning is deterministic, not an LLM
+
+I made a deliberate choice not to have a language model decide infrastructure changes. The
+remediation decision is computed from measured facts (billing mode, provisioned capacity, observed
+throttle counts), and the supporting guidance is retrieved from **official AWS documentation at
+runtime** via the AWS MCP Server, with the sources cited in the pull request.
+
+Wrong infrastructure advice costs money or causes outages. Deterministic logic is reproducible and
+reviewable: the same observed state always produces the same recommendation, every number in the PR
+is read from the live account, and every claim links to either a recorded read-only API call or an
+AWS documentation URL. It also means the system has no inference cost, which keeps it genuinely
+100% AWS Free Tier.
+
+The AI leverage in this project is in **how it was built**: the coding agent (Kiro, connected to AWS
+through the Agent Toolkit) designed, implemented and debugged the system against the live account,
+and the runtime uses that same Agent Toolkit to ground its recommendations in current AWS docs.
+
 ## Architecture
 
 - **Frontend:** React + Vite dashboard, hosted on **Amazon S3** static website hosting.

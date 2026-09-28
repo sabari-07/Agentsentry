@@ -33,9 +33,31 @@ The Zero to Shipped field is crowded with autonomous-AWS-ops copilots (CloudPuls
 | Differentiator | The crowded field | AgentSentry AI |
 |---|---|---|
 | Remediation artifact | Text runbook / "1-click script" | Merge-ready **CDK Pull Request** with `cdk diff` + cost delta + rollback |
-| Proof of outcome | "Here's what you should do" | **Re-verifies the live metric post-deploy** and posts confirmed resolution |
-| Safety model | Varies / auto-apply | Human-in-the-loop by construction — bot only inspects (read-only) and proposes |
+| Proof of outcome | "Here's what you should do" | **Re-verifies the live metric post-deploy**, posts the measured result as a PR comment |
+| Reasoning | LLM free-text, unverifiable | **Deterministic and evidence-linked** — every conclusion traces to an observed metric, and the recommendation cites live AWS documentation retrieved via the Agent Toolkit |
+| Safety model | Varies / auto-apply | Human-in-the-loop by construction — agent only inspects (read-only) and proposes |
 | Ship Gate | Often incomplete | Live public **S3 website URL**, 100% Free Tier |
+
+### Design decision: deterministic reasoning, not a language model
+
+AgentSentry AI deliberately does **not** call a language model to decide infrastructure changes. The
+remediation decision is deterministic and derived from measured facts (billing mode, provisioned
+capacity, throttle counts), and the supporting guidance is fetched from **official AWS documentation
+at runtime** through the AWS MCP Server.
+
+This is a safety and trust argument, not a shortcut:
+
+- **Reproducible.** The same observed state always yields the same recommendation, so the behaviour
+  can be reviewed and tested. An LLM may propose a different change each run.
+- **No hallucinated infrastructure advice.** A wrong capacity or billing-mode change costs money or
+  causes an outage. Nothing in the proposal is invented; every number is read from the live account.
+- **Auditable end to end.** Each claim links to either a recorded read-only API call or a cited AWS
+  documentation URL.
+- **Free to operate.** No inference costs, which keeps the project genuinely 100% AWS Free Tier.
+
+The intelligence in this project sits where it belongs: the **coding agent (Kiro + Agent Toolkit)**
+designed, built and debugged the system against live AWS, and the runtime uses the Agent Toolkit to
+ground its recommendations in current AWS documentation.
 
 ## Category, Lane & Tagging Matrix
 
