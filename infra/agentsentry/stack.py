@@ -61,9 +61,7 @@ class AgentSentryStack(Stack):
             partition_key=dynamodb.Attribute(
                 name="pk", type=dynamodb.AttributeType.STRING
             ),
-            billing_mode=dynamodb.BillingMode.PROVISIONED,
-            read_capacity=1,
-            write_capacity=1,
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             removal_policy=RemovalPolicy.DESTROY,
         )
 
