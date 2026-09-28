@@ -22,6 +22,8 @@ from aws_cdk import (
 )
 from aws_cdk import aws_apigatewayv2 as apigwv2
 from aws_cdk import aws_apigatewayv2_integrations as apigw_integrations
+from aws_cdk import aws_cloudfront as cloudfront
+from aws_cdk import aws_cloudfront_origins as origins
 from aws_cdk import aws_cloudwatch as cloudwatch
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_events as events
@@ -286,13 +288,95 @@ class AgentSentryStack(Stack):
         )
         alarm_rule.add_target(targets.LambdaFunction(incident_fn))
 
-        # --- Outputs ---
+        # --- CloudFront: HTTPS for the dashboard ------------------------- #
+        # Disabled by default. This account is not yet verified for CloudFront:
+        # creating a distribution returns
+        #   "Your account must be verified before you can add new CloudFront
+        #    resources. To verify your account, please contact AWS Support."
+        # which is a support-ticket gate, not a permissions problem. Leaving the
+        # construct behind a flag keeps every other deploy working while making
+        # HTTPS a one-variable change once the account is verified:
+        #
+        #   AGENTSENTRY_ENABLE_CLOUDFRONT=1 cdk deploy
+        #
+        # The dashboard bucket is managed outside this stack, so CloudFront
+        # points at its S3 *website* endpoint as a plain HTTP custom origin
+        # rather than adopting the bucket. That keeps the change additive: the
+        # existing S3 URL keeps serving throughout, and CloudFront simply adds
+        # TLS at the edge on a *.cloudfront.net domain, no certificate needed.
+        #
+        # Content is public by design, so leaving the bucket readable is not a
+        # confidentiality concern; origin access control would be hygiene rather
+        # than protection here.
+        if _cloudfront_enabled():
+            self._add_dashboard_distribution()
+
         from aws_cdk import CfnOutput
 
         CfnOutput(self, "ApiUrl", value=http_api.url or "n/a")
         CfnOutput(self, "IncidentTableName", value=incident_table.table_name)
         CfnOutput(self, "MonitoredTableName", value=monitored_table.table_name)
         CfnOutput(self, "VerificationFunctionName", value=verify_fn.function_name)
+
+    def _add_dashboard_distribution(self) -> None:
+        """Front the existing S3 website endpoint with CloudFront for HTTPS."""
+        from aws_cdk import CfnOutput
+
+        dashboard_origin = origins.HttpOrigin(
+            f"agentsentry-dashboard-{self.account}.s3-website-{self.region}.amazonaws.com",
+            # S3 website endpoints only speak HTTP.
+            protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+        )
+
+        # Short TTLs: the JS/CSS filenames are content-hashed, but index.html is
+        # not, and a judge must never be served a stale build after a deploy.
+        dashboard_cache = cloudfront.CachePolicy(
+            self,
+            "DashboardCachePolicy",
+            cache_policy_name="agentsentry-dashboard-short-ttl",
+            comment="Short TTL so a fresh deploy is visible without invalidation.",
+            default_ttl=Duration.seconds(60),
+            min_ttl=Duration.seconds(0),
+            max_ttl=Duration.seconds(300),
+            enable_accept_encoding_gzip=True,
+            enable_accept_encoding_brotli=True,
+        )
+
+        distribution = cloudfront.Distribution(
+            self,
+            "DashboardDistribution",
+            comment="AgentSentry dashboard over HTTPS",
+            default_root_object="index.html",
+            default_behavior=cloudfront.BehaviorOptions(
+                origin=dashboard_origin,
+                # Plain HTTP requests are redirected rather than refused, so old
+                # links keep working.
+                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+                cached_methods=cloudfront.CachedMethods.CACHE_GET_HEAD,
+                cache_policy=dashboard_cache,
+                compress=True,
+            ),
+            price_class=cloudfront.PriceClass.PRICE_CLASS_ALL,
+        )
+
+        CfnOutput(
+            self,
+            "DashboardHttpsUrl",
+            value=f"https://{distribution.distribution_domain_name}",
+            description="HTTPS entry point for the dashboard and the judges' tour.",
+        )
+
+
+def _cloudfront_enabled() -> bool:
+    """True when the account is verified for CloudFront and HTTPS is wanted.
+
+    Off by default: an unverified account fails the whole deploy when a
+    distribution is created, which would block unrelated changes.
+    """
+    import os
+
+    return os.environ.get("AGENTSENTRY_ENABLE_CLOUDFRONT") == "1"
 
 
 def _bundling_options():
