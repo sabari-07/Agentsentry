@@ -3,10 +3,122 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AgentSentry AI — Autonomous Remediation Copilot</title>
+    <title>AgentSentry AI — autonomous AWS incident remediation, verified against live metrics</title>
+
+    <!--
+      This dashboard is a client-rendered React app. The markup inside #root
+      below is deliberately not empty: automated fetchers and link previews that
+      do not execute JavaScript would otherwise see a blank page and have
+      nothing to read. React replaces this content on mount, so for a real
+      visitor it simply serves as the loading state.
+    -->
+    <meta
+      name="description"
+      content="AgentSentry AI detects any CloudWatch alarm in an AWS account, inspects the
+        affected resource read-only, reasons over the evidence with Claude Sonnet on Amazon
+        Bedrock, and opens a GitHub pull request containing the real CDK infrastructure fix.
+        After a human merges and CI deploys, it re-reads the live metric and publishes the
+        measured value — withholding certification when the fix did not hold."
+    />
+    <meta name="author" content="Built with Kiro and the Agent Toolkit for AWS" />
+    <meta name="robots" content="index, follow" />
+
+    <meta property="og:type" content="website" />
+    <meta
+      property="og:title"
+      content="AgentSentry AI — autonomous AWS incident remediation, verified against live metrics"
+    />
+    <meta
+      property="og:description"
+      content="A model reasons, deterministic guards constrain it, and a CloudWatch metric
+        decides whether it was right. Read-only inspection, human-in-the-loop pull requests,
+        and a verification step that can refuse to certify a fix."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Replaced by React on mount; visible to non-JS fetchers and previews. -->
+      <main
+        style="
+          min-height: 100vh;
+          margin: 0;
+          padding: 48px 24px;
+          background: #0b0b0f;
+          color: #f5f6fa;
+          font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+          line-height: 1.6;
+        "
+      >
+        <div style="max-width: 760px; margin: 0 auto">
+          <p style="color: #a3a8b5; font-size: 13px; letter-spacing: 0.08em; margin: 0 0 8px">
+            LOADING THE LIVE DASHBOARD&hellip;
+          </p>
+          <h1 style="font-size: 30px; line-height: 1.25; margin: 0 0 16px">
+            AgentSentry AI
+          </h1>
+          <p style="color: #d5d8e0; font-size: 17px; margin: 0 0 28px">
+            Autonomous AWS incident remediation that proves its own fixes. When a CloudWatch
+            alarm fires anywhere in the account, AgentSentry inspects the affected resource
+            read-only, grounds its diagnosis in current AWS documentation through the Agent
+            Toolkit, reasons over the evidence with Claude Sonnet on Amazon Bedrock, and opens
+            a pull request containing the actual CDK infrastructure change. A human merges,
+            GitHub Actions deploys it, and only then does AgentSentry re-read the live metric
+            and publish the measured number.
+          </p>
+
+          <h2 style="font-size: 15px; color: #a3a8b5; margin: 0 0 10px">HOW IT WORKS</h2>
+          <ol style="color: #d5d8e0; margin: 0 0 28px; padding-left: 22px">
+            <li>Any CloudWatch alarm in the account enters the pipeline via EventBridge.</li>
+            <li>The affected resource is identified from the alarm payload, across 7 namespaces.</li>
+            <li>The resource is inspected with read-only calls, each one recorded for audit.</li>
+            <li>Current AWS documentation is retrieved at runtime through the AWS MCP Server.</li>
+            <li>A model reasons over that evidence; deterministic guards decide if it may act.</li>
+            <li>The fix ships as a reviewable pull request containing real CDK code.</li>
+            <li>After a human merges and CI deploys, the live metric is measured again.</li>
+          </ol>
+
+          <h2 style="font-size: 15px; color: #a3a8b5; margin: 0 0 10px">
+            WHAT MAKES IT DIFFERENT
+          </h2>
+          <p style="color: #d5d8e0; margin: 0 0 28px">
+            The agent never merges and has no path to mutate infrastructure. The model selects
+            from a fixed set of permitted actions and must name the same resource the alarm
+            named, so it cannot author arbitrary code or redirect a fix elsewhere. And
+            &ldquo;resolved&rdquo; is a measurement it has to earn: when a metric is still
+            breaching, it withholds certification and says so publicly on the pull request.
+          </p>
+
+          <p style="color: #a3a8b5; font-size: 14px; margin: 0">
+            Built for the AWS Zero to Shipped hackathon with Kiro and the Agent Toolkit for
+            AWS &middot;
+            <a href="https://github.com/sabari-07/Agentsentry" style="color: #8ab4f8">
+              Source code on GitHub
+            </a>
+          </p>
+
+          <noscript>
+            <p
+              style="
+                margin: 28px 0 0;
+                padding: 14px 16px;
+                background: #262832;
+                border-radius: 8px;
+                color: #f5f6fa;
+              "
+            >
+              The interactive dashboard needs JavaScript. The live incident data is also
+              available directly as JSON from
+              <a
+                href="https://6klp6vbzza.execute-api.us-east-1.amazonaws.com/api/incidents"
+                style="color: #8ab4f8"
+                >the public API</a
+              >.
+            </p>
+          </noscript>
+        </div>
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
