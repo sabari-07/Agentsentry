@@ -6,146 +6,203 @@ Copy the sections below into your Builder Center project post.
 - **Lane tag:** `#startups`
 - **Live app (Ship Gate):** http://agentsentry-dashboard-273354655941.s3-website-us-east-1.amazonaws.com
 - **Repository:** https://github.com/sabari-07/Agentsentry
-- **Example real remediation PR:** https://github.com/sabari-07/Agentsentry/pull/1
+- **Real remediation PR (agent-authored):** https://github.com/sabari-07/Agentsentry/pull/4
 
 ---
 
 ## Title
 
-**AgentSentry AI — the AWS incident agent that ships a reviewable fix and proves it worked**
+**AgentSentry AI: the fix is a pull request, and the proof is the metric**
 
 ## Short description (for feeds/search)
 
-When AWS infrastructure breaks, AgentSentry AI detects it, inspects the account read-only, opens a
-real GitHub pull request containing the fix, cost delta and rollback plan — then re-checks the live
-metric after deploy and records a verified resolution.
+Most AWS tools tell you what broke. AgentSentry detects the incident, opens a real pull request
+containing the fix, then re-reads the live CloudWatch metric after the merge and records whether the
+fix actually held — including when it didn't.
+
+---
+
+## The one screen that explains the project
+
+A real incident from this AWS account, end to end, with nothing seeded:
+
+| Step | What actually happened | Evidence |
+|---|---|---|
+| 1. Break | A write burst exceeded the monitored DynamoDB table's 1 WCU. **121 real `PutItem` requests were refused** with `ProvisionedThroughputExceededException`. | CloudWatch `ThrottledRequests` |
+| 2. Detect | A CloudWatch alarm fired → EventBridge → incident Lambda. Incident `INC-1790566592` appeared on the dashboard on its own. | Lambda log, 20.7s execution |
+| 3. Inspect | The agent called `DescribeTable` and `GetMetricStatistics` — **read-only only** — and recorded every call. | Read-only audit panel |
+| 4. Consult | It queried the **AWS MCP Server (Agent Toolkit)** and cited 3 official AWS documentation sources for the fix. | Section 6 of the PR |
+| 5. Propose | It created a branch, committed a remediation manifest, and **opened a real pull request** with diagnosis, `cdk diff`, cost delta, alternatives, and a rollback plan. | [PR #4](https://github.com/sabari-07/Agentsentry/pull/4), 7,004 chars |
+| 6. Merge | A human merges. The agent never merges, and never applies a change. | GitHub |
+| 7. **Prove** | The verification loop re-read the live metric: **`ThrottledRequests` = 0.0**, and posted that measurement **as a comment on the PR**. | Verification comment on the PR |
+
+No step in that chain is simulated except the initial load burst, which stands in for a traffic
+spike. Detection, inspection, diagnosis, the pull request and the verification are all real.
 
 ---
 
 ## The problem
 
-Cloud incidents are expensive and they happen at the worst times. A database starts throttling, a
-function starts timing out, error rates climb. An engineer then has to notice the alarm, dig through
-metrics, work out the right fix, write it, deploy it, and *hope* it worked.
+Cloud incidents are expensive, and they arrive at the worst time. A table starts throttling, a
+function starts timing out, error rates climb. Someone then has to notice the alarm, dig through
+metrics, work out the correct fix, write it, deploy it — and then simply *hope* it worked.
 
-Most "AI ops" tools stop at the first half of that: they hand you a summary or a runbook. You still
-do the work, and nobody ever confirms the fix actually held.
+Tooling helps with the first half and abandons the second. You get a dashboard, a summary, or a
+runbook. You still do the work, and **nothing ever confirms the fix held.**
 
-## What AgentSentry AI does
-
-AgentSentry AI closes the whole loop, with two things that make it different:
+## What AgentSentry AI does differently
 
 **1. The pull request is the deliverable, not a chat reply.**
-Every remediation arrives as a **merge-ready GitHub PR** containing the Infrastructure-as-Code
-change, a `cdk diff`, a **cost-delta table**, and a **rollback plan**. It is reviewable, auditable,
-and safe by construction: the agent only ever *proposes*. A human merges.
+Every remediation arrives as a merge-ready GitHub PR containing the Infrastructure-as-Code change, a
+`cdk diff`, a **cost-delta table**, **alternatives considered with reasons**, a **rollback plan**,
+and the **AWS documentation it consulted**. It is reviewable, auditable, and safe by construction:
+the agent only proposes. A human merges.
 
-**2. It proves the fix worked.**
-After the change deploys, AgentSentry re-reads the **live CloudWatch metric** and only then records
-`RESOLVED_VERIFIED` with the observed value and a timestamp. No claim of success without evidence.
+**2. It proves the fix worked — and says so when it didn't.**
+After the merge, AgentSentry re-reads the live CloudWatch metric and records `RESOLVED_VERIFIED`
+**only if** the metric has returned below threshold. If it hasn't, the incident is marked `FAILED`
+and the PR says so. Success is measured, never assumed.
 
-### The live loop (all real, nothing seeded)
+### The proof that this is a measurement, not a rubber stamp
 
-1. A write burst exceeds the monitored DynamoDB table's capacity → **real throttling**.
-2. A **CloudWatch alarm** fires → **EventBridge** → the incident Lambda.
-3. The agent performs **read-only inspection** (`DescribeTable`, `GetMetricStatistics`) and writes a
-   diagnosis grounded in what it actually observed — e.g. *"PROVISIONED billing (RCU=1, WCU=1) with
-   21 throttled PutItem requests in the last 15 minutes."*
-4. It creates a branch, commits a remediation manifest, and **opens a real GitHub PR** proposing the
-   correct fix (switch to on-demand billing), with cost delta and rollback.
-5. The **verification loop** re-checks the metric (now `0.0`) and marks the incident
-   **RESOLVED_VERIFIED**.
+[**PR #5**](https://github.com/sabari-07/Agentsentry/pull/5) carries two verification comments from
+the same incident, in order:
 
-The dashboard shows this as an incident moving **Active → Open PR → Verified Resolution**, with a
-per-incident **read-only audit trail** proving every agent call was `Describe*` / `Get*` / `List*`.
+| | Verdict | Observed | What it means |
+|---|---|---|---|
+| First run | ❌ **FAILED** | `ThrottledRequests` = **116** (threshold 1) | The metric was still breaching. The agent refused to call the fix successful and said so publicly on the PR. |
+| Second run | ✅ **RESOLVED_VERIFIED** | `ThrottledRequests` = **0** | The metric had genuinely recovered. |
 
-## Why this is safe
+A tool that only reports can never be wrong about an outcome. This one can be, and when it was, it
+published the negative result rather than hiding it. That failure comment is the most important
+artifact in this project.
 
-- **Read-only by construction** — the agent inspects; it never mutates infrastructure.
-- **Human-in-the-loop** — merging is always a human action.
-- **Auditable** — every API call the agent made is recorded and surfaced in the UI (and visible in
-  CloudTrail Event history).
-- **Reversible** — every PR carries a rollback plan.
+## Measured result (as of Sept 28)
 
-### Why the reasoning is deterministic, not an LLM
+- **6 pull requests authored by the agent**, up to **7,004 characters** of structured incident report
+  each (diagnosis, evidence, impact, `cdk diff`, AWS docs consulted, alternatives, cost, rollback,
+  audit trail).
+- **7 verification comments** posted back onto those PRs with the measured metric value — including
+  **one ❌ failure** that refused to confirm a fix while `ThrottledRequests` sat at 116.
+- Every incident **self-generated by a real CloudWatch alarm**; largest observed burst **121 refused
+  writes** in one window.
+- **Read-only inspection only** — `DescribeTable` and `GetMetricStatistics`, recorded per incident and
+  shown in the UI. Zero mutating calls.
+- **Cost: $0.00.** The whole system runs inside the AWS Free Tier: DynamoDB at 1 RCU/1 WCU (free
+  tier covers 25/25), three small Lambdas, one HTTP API, one CloudWatch alarm (limit 10), S3 static
+  hosting, and **CloudTrail Event history only — no trail, no data events**. There is no model
+  inference cost because no model is in the runtime path.
 
-I made a deliberate choice not to have a language model decide infrastructure changes. The
-remediation decision is computed from measured facts (billing mode, provisioned capacity, observed
-throttle counts), and the supporting guidance is retrieved from **official AWS documentation at
-runtime** via the AWS MCP Server, with the sources cited in the pull request.
+## What it deliberately doesn't do
 
-Wrong infrastructure advice costs money or causes outages. Deterministic logic is reproducible and
-reviewable: the same observed state always produces the same recommendation, every number in the PR
-is read from the live account, and every claim links to either a recorded read-only API call or an
-AWS documentation URL. It also means the system has no inference cost, which keeps it genuinely
-100% AWS Free Tier.
+- **It never applies a change.** It opens a pull request. Merging is a human action, always.
+- **It never mutates AWS.** Inspection is `Describe*` / `Get*` / `List*` only, and every call is
+  recorded and shown in the UI.
+- **A language model never decides the fix.** Deterministic rules read the observed state and select
+  the remediation; the supporting guidance comes from official AWS documentation retrieved at
+  runtime. Wrong infrastructure advice costs money or causes outages, so the same observed state
+  always produces the same, reviewable recommendation.
+- **It doesn't claim success it hasn't measured.** An unverified incident stays unverified.
 
-The AI leverage in this project is in **how it was built**: the coding agent (Kiro, connected to AWS
-through the Agent Toolkit) designed, implemented and debugged the system against the live account,
-and the runtime uses that same Agent Toolkit to ground its recommendations in current AWS docs.
+## AWS architecture
 
-## Architecture
-
-- **Frontend:** React + Vite dashboard, hosted on **Amazon S3** static website hosting.
-- **API:** FastAPI on **AWS Lambda** (via Mangum) behind an **HTTP API Gateway**.
-- **Data:** **Amazon DynamoDB** (incident store, on-demand billing).
-- **Detection:** **CloudWatch** alarm → **EventBridge** rule → incident Lambda.
-- **Verification:** a dedicated Lambda that re-reads the live metric post-deploy.
-- **GitOps:** GitHub REST API (branch → commit → PR); a GitHub Actions workflow can invoke
-  verification after a merge.
-- **Infrastructure as Code:** **AWS CDK (Python)** — everything above is deployed from `infra/`.
-
-Runs entirely within the **AWS Free Tier** (on-demand DynamoDB, Lambda, HTTP API, S3 static
-hosting, and CloudTrail Event history — no trail, no data events).
+- **Detect:** CloudWatch alarm on `ThrottledRequests` → EventBridge rule → `agentsentry-incident-handler` Lambda.
+- **Inspect:** boto3 read-only calls (`DescribeTable`, `GetMetricStatistics`), each recorded as an audit entry.
+- **Ground:** the Lambda calls the **AWS MCP Server** (`https://aws-mcp.us-east-1.api.aws/mcp`) with
+  SigV4-signed JSON-RPC and invokes `aws___search_documentation`, citing the sources in the PR.
+- **Propose:** GitHub REST API — create branch, commit the remediation manifest, open the PR.
+- **Prove:** `agentsentry-verification-handler` Lambda re-reads the metric; a GitHub Actions workflow
+  (`pull_request: closed`) calls it automatically on merge, needing **no AWS credentials in CI**
+  because the verification API is a public endpoint.
+- **Store:** DynamoDB (on-demand) holds incidents, PR links and verification results.
+- **Serve:** FastAPI on Lambda behind an HTTP API Gateway; React dashboard on S3 static hosting.
+- **Infrastructure as Code:** the entire stack is AWS CDK (Python) in `infra/`.
 
 ## How the coding agent helped me ship
 
-I built this with **Kiro** connected to my AWS account through the **Agent Toolkit for AWS (AWS MCP
-Server)**, and that connection did real work rather than just autocomplete:
+I built this with **Kiro connected to my AWS account through the Agent Toolkit for AWS (AWS MCP
+Server)**. That connection did real work, not autocomplete. Four production failures were found and
+fixed by reading actual AWS errors and CloudWatch logs:
 
-- **Live account inspection while building.** With the AWS MCP Server connected, the agent could
-  query my real account (list DynamoDB tables, read stack outputs, inspect metrics) instead of me
-  switching to the console to check every assumption.
-- **It debugged real deployment failures.** Three genuine problems were found and fixed by reading
-  actual CloudWatch logs and AWS errors, not by guessing:
-  - `Runtime.ImportModuleError: No module named 'mangum'` — the Lambda asset shipped source without
-    dependencies. Fixed by bundling `pip install` into the CDK asset.
-  - `No module named 'pydantic_core._pydantic_core'` — Windows wheels had been installed for a Linux
-    runtime. Fixed by pulling `manylinux2014_x86_64` wheels at bundle time.
-  - `AccessDenied: cloudwatch:GetMetricStatistics` — the API Lambda ran the verification endpoint
-    without the matching IAM policy. Fixed by granting the read-only CloudWatch policy.
-  - A CDK synth error (`TooManyMetricsInMathExpression`) because the DynamoDB all-operations
-    throttling metric exceeds CloudWatch's 10-metric alarm limit. Fixed by alarming on a single
-    `ThrottledRequests` metric.
-- **Spec-first, then implementation.** I started from a written plan (`project_plan.md`), had the
-  agent implement against it, and updated the plan whenever reality differed — for example, the
-  frontend moved from Amplify to S3 static hosting after the account hit its Amplify app limit.
+1. `Runtime.ImportModuleError: No module named 'mangum'` — the Lambda asset shipped source without
+   dependencies. Fixed by bundling `pip install` into the CDK asset at synth time.
+2. `No module named 'pydantic_core._pydantic_core'` — Windows wheels had been installed for a Linux
+   runtime. Fixed by pulling `manylinux2014_x86_64` wheels during bundling.
+3. CDK reported "no changes" while the Lambda stayed broken — the asset hash was computed from
+   source, not from the bundled output. Fixed with `AssetHashType.OUTPUT`.
+4. `AccessDenied: cloudwatch:GetMetricStatistics` — the API Lambda runs the verification endpoint but
+   lacked the matching IAM policy. Found in the Lambda's own logs.
+
+A fifth came from CDK synth: `TooManyMetricsInMathExpression`, because DynamoDB's all-operations
+throttling metric exceeds CloudWatch's 10-metric limit for alarms on math expressions. Fixed by
+alarming on a single `ThrottledRequests` metric.
+
+### The bug that mattered most
+
+While building the demo I tried to make the verification **fail on purpose**, to check that it
+actually could. It reported healthy anyway. That turned out to be a silent false positive in the
+verification loop itself, the one component whose entire job is to be trustworthy:
+
+- The alarm watched `ThrottledRequests` with dimensions `{TableName, Operation=PutItem}`, but the
+  verification queried only `{TableName}`. A CloudWatch metric is identified by its **complete**
+  dimension set, so the partial query matched nothing, returned zero datapoints, and was interpreted
+  as "recovered". `list_metrics` confirmed the only published combination includes `Operation`.
+- The same query also used `Maximum`. DynamoDB emits each throttle as a separate event of value 1, so
+  `Maximum` is always 1 whenever any throttling occurs and says nothing about volume. `Sum` is the
+  real count (105 refused writes in the window I measured).
+
+Both are fixed, with the reasoning written into the code so the trap is documented rather than just
+patched. The lesson is uncomfortable and worth stating plainly: a verification step that cannot fail
+is indistinguishable from no verification at all. Being able to produce that ❌ comment on PR #5 is
+what makes the ✅ comments mean anything.
+
+The same Agent Toolkit then became a **runtime dependency**: the deployed Lambda queries it for AWS
+documentation so its recommendations cite current guidance rather than my assumptions.
 
 ## My development process
 
-1. **Plan first.** Wrote the architecture, demo scenario, free-tier budget, and proof strategy
-   before coding.
-2. **Build the pipeline behind a flag.** `USE_MOCK_DATA=true` let me develop and demo the full UI
-   locally with zero AWS calls; flipping it to `false` switches the same code to live AWS.
-3. **Deploy with IaC.** One `cdk deploy` provisions tables, Lambdas, API Gateway, the alarm, and the
+1. **Plan first.** Architecture, demo scenario, free-tier budget and proof strategy written before code.
+2. **Build behind a flag.** `USE_MOCK_DATA=true` runs the whole UI locally with zero AWS calls;
+   flipping it to `false` points the identical code at live AWS.
+3. **Deploy with IaC.** One `cdk deploy` provisions tables, Lambdas, API Gateway, the alarm and the
    EventBridge rule.
-4. **Make it genuinely live.** Rather than leave scripted demo data, I added a load generator that
-   causes **real** throttling so incidents are self-generated by real AWS events.
-5. **Prove it.** Added the verification loop and the read-only audit trail so every claim the
-   product makes can be checked.
+4. **Make the incidents real.** Rather than ship seeded demo data, I added a load generator that
+   causes genuine throttling, so incidents are created by real AWS events.
+5. **Then make it provable.** The verification loop and the read-only audit trail exist so that every
+   claim the product makes can be independently checked.
 
-## What's next
+## Who it's for
 
-- Application-level remediation (e.g. detecting a DynamoDB 400 KB item-size failure and proposing
-  the S3-offload pattern, or pagination for oversized reads).
-- CloudFront in front of S3 for HTTPS.
-- Secrets Manager for the GitHub token, and OIDC for the deploy role.
+Engineering teams who carry AWS incidents, and the platform leads who have to trust automation near
+production. The next step after the hackathon is a read-only pilot against one non-production
+account, widening the detectors beyond DynamoDB throttling to Lambda timeouts and API error rates,
+and adding application-level fixes (for example, detecting a DynamoDB 400 KB item-size failure and
+proposing the S3-offload pattern).
+
+## Try it
+
+1. Open the dashboard: http://agentsentry-dashboard-273354655941.s3-website-us-east-1.amazonaws.com
+2. **Overview** shows the counts and the latest item in each stage. The sidebar switches to the full
+   history of Incidents, Pull requests, Verifications, and the Read-only audit.
+3. Open [PR #4](https://github.com/sabari-07/Agentsentry/pull/4): the diagnosis quotes the real
+   throttle count, and section 6 lists the AWS documentation the agent consulted at runtime.
+4. **Then open [PR #5](https://github.com/sabari-07/Agentsentry/pull/5) and read the comments in
+   order.** The agent first marked the fix ❌ **FAILED** because `ThrottledRequests` was still at 116,
+   then ✅ **RESOLVED_VERIFIED** once the metric reached 0. That is the whole argument of this project
+   in two comments.
+4. Reproduce it in your own account: `python scripts/trigger_incident.py` causes real throttling, and
+   a new incident with a new PR appears within a few minutes. `README.md` and `DEPLOYMENT.md` have
+   the full steps.
 
 ---
 
-## Attribution / honesty notes
+## Honesty notes
 
-- The dashboard is served over HTTP via S3 static website hosting (AWS Amplify was the original
-  plan; that account had reached its Amplify app limit).
-- The GitHub Actions merge → verify workflow is present but set to manual trigger; the verification
-  loop itself runs live and was exercised end to end via the API.
+- The dashboard is served over HTTP via S3 static website hosting. AWS Amplify was the original plan;
+  that account had already reached its Amplify app limit.
+- The incident trigger is a deliberate load burst standing in for a traffic spike. Everything after
+  it — alarm, detection, inspection, diagnosis, pull request, verification — is real and unscripted.
+- The remediation PR commits an incident report documenting the change rather than mutating the live
+  CDK stack, so merging is safe to demonstrate.
+
+*Built for the AWS Zero to Shipped hackathon with Kiro and the Agent Toolkit for AWS.*

@@ -92,9 +92,11 @@ class DiagnosisService:
             wcu = int(pt.get("WriteCapacityUnits", 0))
             item_count = int(t.get("ItemCount", 0))
 
+        # 15-minute window, summed: the real number of refused writes.
         throttled = self._cw.sum_metric(
             "AWS/DynamoDB", "ThrottledRequests", {"TableName": table_name, "Operation": "PutItem"}, 15
         )
+        logger.info("observed %g throttled PutItem requests in 15 min for %s", throttled, table_name)
         calls.append(AuditCall(
             event_name="GetMetricStatistics", event_time=now(),
             aws_service="monitoring.amazonaws.com", read_only=True, principal=principal,
