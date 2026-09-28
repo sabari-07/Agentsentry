@@ -4,6 +4,7 @@ from .cloudwatch_service import CloudWatchService
 from .diagnosis_service import DiagnosisService
 from .github_service import GitHubService
 from .incident_store import IncidentStore
+from .mcp_service import McpDocsService
 from .verification_service import VerificationService
 
 __all__ = [
@@ -12,5 +13,6 @@ __all__ = [
     "DiagnosisService",
     "GitHubService",
     "IncidentStore",
+    "McpDocsService",
     "VerificationService",
 ]

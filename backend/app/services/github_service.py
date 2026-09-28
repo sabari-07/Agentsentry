@@ -68,6 +68,7 @@ class GitHubService:
         alternatives: str = "",
         verification: str = "",
         audit_calls: list | None = None,
+        docs: list | None = None,
     ) -> str:
         """Compose a detailed, reviewable incident report as the PR description."""
         delta = cost_delta.difference_usd
@@ -133,13 +134,29 @@ class GitHubService:
         fix.append(f"```\n{cdk_diff}\n```")
         parts.append("\n".join(fix))
 
+        # --- AWS documentation consulted (via the Agent Toolkit MCP server) ---
+        if docs:
+            d = ["### 6. AWS documentation consulted\n"]
+            d.append(
+                "The agent queried the **AWS MCP Server (Agent Toolkit for AWS)** at runtime and "
+                "grounded this recommendation in the following official AWS documentation:\n"
+            )
+            for doc in docs:
+                title = doc.get("title", "AWS documentation")
+                url = doc.get("url", "")
+                excerpt = doc.get("excerpt", "")
+                d.append(f"- **[{title}]({url})**" if url else f"- **{title}**")
+                if excerpt:
+                    d.append(f"  > {excerpt}")
+            parts.append("\n".join(d))
+
         # --- Alternatives considered ---
         if alternatives:
-            parts.append(f"### 6. Alternatives considered\n\n{alternatives}")
+            parts.append(f"### 7. Alternatives considered\n\n{alternatives}")
 
         # --- Cost ---
         parts.append(
-            "### 7. Cost impact\n\n"
+            "### 8. Cost impact\n\n"
             "| Before | After | Difference |\n| --- | --- | --- |\n"
             f"| ${cost_delta.before_monthly_usd:.2f}/mo | ${cost_delta.after_monthly_usd:.2f}/mo "
             f"| {delta_str} |\n\n"
@@ -149,14 +166,14 @@ class GitHubService:
 
         # --- How to verify ---
         if verification:
-            parts.append(f"### 8. How this will be verified after merge\n\n{verification}")
+            parts.append(f"### 9. How this will be verified after merge\n\n{verification}")
 
         # --- Rollback ---
-        parts.append(f"### 9. Rollback plan\n\n{rollback}")
+        parts.append(f"### 10. Rollback plan\n\n{rollback}")
 
         # --- Audit trail ---
         if audit_calls:
-            rows = ["### 10. Read-only audit trail\n"]
+            rows = ["### 11. Read-only audit trail\n"]
             rows.append(
                 "Every AWS API call the agent made while investigating this incident:\n"
             )
@@ -178,6 +195,52 @@ class GitHubService:
         )
 
         return "\n\n".join(parts)
+
+    # ------------------------------------------------------------------ #
+    # Comment the verified outcome back onto the PR
+    # ------------------------------------------------------------------ #
+    def comment_verification(self, pr_number: int, verification, incident_id: str) -> bool:
+        """Post the verification result as a comment on the remediation PR.
+
+        This closes the loop publicly: the same PR that proposed the fix now
+        carries the evidence of whether it actually worked.
+        """
+        if not self.configured or not pr_number:
+            return False
+
+        healthy = verification.healthy
+        icon = "✅" if healthy else "❌"
+        headline = (
+            "Verified: the fix resolved the incident"
+            if healthy
+            else "Not verified: the metric is still breaching"
+        )
+        body = (
+            f"## {icon} AgentSentry AI — post-deploy verification\n\n"
+            f"**{headline}**\n\n"
+            f"After deployment, AgentSentry AI re-read the live CloudWatch metric for this "
+            f"resource. This result is measured, not assumed.\n\n"
+            "| Check | Value |\n| --- | --- |\n"
+            f"| Incident | `{incident_id}` |\n"
+            f"| Metric | `{verification.metric_name}` |\n"
+            f"| Observed value | **{verification.observed_value:g}** |\n"
+            f"| Threshold | {verification.threshold:g} |\n"
+            f"| Observation window | {verification.window_minutes} minutes |\n"
+            f"| Verified at | {verification.verified_at.isoformat()} |\n"
+            f"| Outcome | **{'RESOLVED_VERIFIED' if healthy else 'FAILED'}** |\n\n"
+            f"{verification.summary}\n"
+        )
+        try:
+            with httpx.Client(timeout=20, headers=self._headers()) as client:
+                resp = client.post(
+                    self._repo_url(f"/issues/{pr_number}/comments"), json={"body": body}
+                )
+                resp.raise_for_status()
+            logger.info("Posted verification comment on PR #%s", pr_number)
+            return True
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to comment verification on PR #%s", pr_number)
+            return False
 
     # ------------------------------------------------------------------ #
     # Full PR flow: branch -> commit -> PR

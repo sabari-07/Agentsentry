@@ -15,15 +15,44 @@ from app.models import AuditCall, CostDelta, PullRequest
 from config import Settings
 
 from .cloudwatch_service import CloudWatchService
+from .mcp_service import McpDocsService
 
 logger = logging.getLogger("agentsentry.diagnosis")
 
 
 class DiagnosisService:
-    def __init__(self, settings: Settings, cloudwatch: CloudWatchService) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        cloudwatch: CloudWatchService,
+        docs: "McpDocsService | None" = None,
+    ) -> None:
         self._settings = settings
         self._cw = cloudwatch
+        self._docs = docs
         self._ddb = None if settings.use_mock_data else self._init_ddb()
+
+    def consult_documentation(self, facts: dict) -> list[dict]:
+        """Look up authoritative AWS guidance for the observed symptom.
+
+        Uses the **AWS MCP Server (Agent Toolkit)** so the recommended fix is
+        grounded in current AWS documentation rather than hardcoded advice.
+        Returns [] if the lookup is unavailable — the pipeline still works.
+        """
+        if self._docs is None:
+            return []
+        billing = facts.get("billing_mode", "UNKNOWN")
+        if billing == "PROVISIONED":
+            phrase = (
+                "DynamoDB ThrottledRequests provisioned write capacity exceeded "
+                "switch to on-demand PAY_PER_REQUEST capacity mode best practice"
+            )
+        else:
+            phrase = (
+                "DynamoDB on-demand table throttling adaptive capacity warm-up "
+                "exponential backoff retry throttled requests"
+            )
+        return self._docs.search_documentation(phrase, limit=3)
 
     def _init_ddb(self):
         import boto3

@@ -51,6 +51,13 @@ def handler(event: dict, _context) -> dict:
     # --- Real read-only inspection + diagnosis ---
     try:
         facts = container.diagnosis.inspect_table(resource_id)
+
+        # Consult live AWS documentation through the AWS MCP Server (Agent
+        # Toolkit) so the proposed fix cites authoritative guidance.
+        docs = container.diagnosis.consult_documentation(facts)
+        facts["docs"] = docs
+        logger.info("Consulted %d AWS documentation source(s) via MCP", len(docs))
+
         diagnosis, pr = container.diagnosis.diagnose(resource_id, facts)
         incident.diagnosis = diagnosis
         incident.audit_calls = facts["audit_calls"]
@@ -89,6 +96,7 @@ def _maybe_open_pr(container, incident, pr, diagnosis: str, facts: dict):
         alternatives=narrative.get("alternatives", ""),
         verification=narrative.get("verification", ""),
         audit_calls=incident.audit_calls,
+        docs=facts.get("docs"),
     )
     # Commit a real, reviewable remediation manifest tied to this incident.
     file_path = f"remediations/{incident.id}.md"

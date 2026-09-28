@@ -13,6 +13,7 @@ from app.services import (
     DiagnosisService,
     GitHubService,
     IncidentStore,
+    McpDocsService,
     VerificationService,
 )
 from config import Settings, get_settings
@@ -27,8 +28,11 @@ class Container:
         self.cloudwatch = CloudWatchService(settings)
         self.cloudtrail = CloudTrailService(settings)
         self.github = GitHubService(settings)
-        self.diagnosis = DiagnosisService(settings, self.cloudwatch)
-        self.verification = VerificationService(settings, self.incident_store, self.cloudwatch)
+        self.mcp_docs = McpDocsService(settings)
+        self.diagnosis = DiagnosisService(settings, self.cloudwatch, self.mcp_docs)
+        self.verification = VerificationService(
+            settings, self.incident_store, self.cloudwatch, self.github
+        )
 
 
 @lru_cache

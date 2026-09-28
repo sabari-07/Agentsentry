@@ -7,19 +7,24 @@
 Most "AWS incident bot" projects stop at printing a runbook or a one-click script. AgentSentry AI is different in two ways that judges can see and verify:
 
 1. **The Pull Request is the hero, not a chatbot reply.** Every remediation is delivered as a **merge-ready GitHub PR** containing the actual CDK code change, a `cdk diff`, a **cost-delta breakdown**, and a **rollback plan**. It is reviewable, auditable, and safe by construction (human merges, never the bot).
-2. **It proves the fix worked.** After a human merges and the change deploys, AgentSentry AI re-inspects the live metric and posts a **verified resolution** ("throttling gone, error rate back under threshold, confirmed at <timestamp>") to both the dashboard and the PR. No claim without evidence.
+2. **It proves the fix worked.** When the remediation PR is merged, a GitHub Actions workflow calls the verification endpoint, which re-reads the **live CloudWatch metric** and records `RESOLVED_VERIFIED` (or `FAILED`) with the observed value and a timestamp — then posts that measured outcome as a **comment on the merged PR** and shows it on the dashboard. No claim without evidence.
 
 Two independent, judge-friendly proof layers back these claims:
 
 - **Primary proof — the verification loop:** the live CloudWatch metric returns to healthy after the merge, with a timestamp. Proves the fix *worked*.
 - **Secondary proof — CloudTrail read-only audit:** using CloudTrail **Event history** (the free 90-day record of management events — **no trail, no S3 bucket, no data events**, so it stays 100% Free Tier), we show the exact API calls the agent made during an incident are all read-only (`Describe*` / `Get*` / `List*`), never mutating. Proves the agent was *safe and only inspected*. This makes the "read-only by construction, human-in-the-loop" claim something a judge can verify in seconds rather than take on trust.
 
-It connects to live AWS infrastructure using the **Agent Toolkit for AWS (via Model Context Protocol / MCP)** and monitors CloudWatch metrics and EventBridge telemetry. When an incident occurs, AgentSentry AI:
+It uses the **Agent Toolkit for AWS** in two distinct places, and the distinction matters:
 
-- Performs a **read-only** inspection of live AWS metrics via MCP.
-- Cross-references live AWS documentation to determine the correct fix.
-- Proposes an **Infrastructure as Code (AWS CDK)** patch by automatically opening a **GitHub Pull Request** with cost delta, `cdk diff`, and rollback notes.
-- Visualizes real-time diagnostic reports, active PR statuses, and **verified resolutions** on a publicly accessible dashboard hosted on **Amazon S3 static website hosting**.
+- **At development time:** the coding agent (Kiro) is connected to the account through the **AWS MCP Server** and was used to build, inspect and debug the system against live AWS.
+- **At runtime:** the incident Lambda calls the **AWS MCP Server endpoint directly** (SigV4-signed HTTPS) to query the `aws___search_documentation` tool, so every proposed fix cites current AWS documentation. Live resource inspection itself is done with the AWS SDK (boto3) using read-only APIs.
+
+When an incident occurs, AgentSentry AI:
+
+- Performs a **read-only** inspection of the affected resource and its live CloudWatch metrics (`DescribeTable`, `GetMetricStatistics`).
+- **Consults live AWS documentation through the AWS MCP Server (Agent Toolkit)** and cites the sources it used.
+- Proposes an **Infrastructure as Code (AWS CDK)** fix by automatically opening a **GitHub Pull Request** with a diagnosis, `cdk diff`, cost delta, alternatives considered, and rollback notes.
+- After the PR is merged, **re-reads the live metric** and **comments the measured outcome back on the PR**, then shows the verified resolution on a publicly accessible dashboard hosted on **Amazon S3 static website hosting**.
 
 ### Positioning: why this is not "another CloudWatch bot"
 
@@ -41,7 +46,7 @@ The Zero to Shipped field is crowded with autonomous-AWS-ops copilots (CloudPuls
 
 > **Rules note:** Per the official Zero to Shipped rules, submissions must carry exactly **one category tag** and **one lane tag**. Using AWS CDK and open-sourcing the repo are **not required** — CDK is used here because the agent's remediation artifact is a CDK PR, and a public repo is recommended only because judges reward seeing your development process. The hard requirements are: a documented coding-agent-to-AWS connection, a live public URL (Ship Gate), an original app, category + lane, and the write-up.
 | Mandatory Ship Gate | S3 static website public URL | Live, globally accessible dashboard on Amazon S3 static hosting (Amplify app limit was hit on the target account; S3 satisfies the same Ship Gate). |
-| Agent Requirement | Agent Toolkit for AWS | Coding agent (Kiro) linked to the **AWS MCP Server** via `uvx mcp-proxy-for-aws-cli`, using AWS profile `agentsentry` (account 273354655941). |
+| Agent Requirement | Agent Toolkit for AWS | **Dev time:** coding agent (Kiro) linked to the **AWS MCP Server** via `uvx mcp-proxy-for-aws-cli`, AWS profile `agentsentry` (account 273354655941). **Runtime:** the incident Lambda calls the same AWS MCP Server endpoint (SigV4) to query `aws___search_documentation`. |
 
 ### Live deployment (as shipped)
 
@@ -285,7 +290,18 @@ GitHub Pull Request. You never apply changes directly.
 
 ### Step 8: Post-Merge Verification (the winning moment)
 
-After a human merges the PR and GitHub Actions runs `cdk deploy`, the pipeline sends a "deploy complete" event that invokes the Verification Handler. It confirms the metric has cleared, updates the incident to `RESOLVED_VERIFIED`, and comments the confirmed result back on the PR. Capture this end-to-end loop (incident → PR → merge → verified resolution) in your demo video.
+When a human merges the remediation PR, the `Verify Remediation` GitHub Actions workflow fires on the
+`pull_request: closed` event, extracts the incident ID from the PR, and calls the public verification
+endpoint. The verification handler re-reads the live CloudWatch metric over a 5-minute window and
+records `RESOLVED_VERIFIED` (or `FAILED`) with the observed value and timestamp, then **comments that
+measured outcome back on the merged PR** and surfaces it on the dashboard.
+
+This requires **no AWS credentials in CI** — the verification API is a public HTTPS endpoint. An
+optional deploy job re-runs `cdk deploy` on merge, and is skipped automatically unless the
+`AWS_DEPLOY_ROLE_ARN` secret is configured.
+
+Capture this end-to-end loop (incident → PR → merge → verified resolution + PR comment) in your demo
+video.
 
 ## Suggested Submission Blurb (for the Builder Center post)
 

@@ -28,10 +28,12 @@ class VerificationService:
         settings: Settings,
         store: IncidentStore,
         cloudwatch: CloudWatchService,
+        github=None,
     ) -> None:
         self._settings = settings
         self._store = store
         self._cloudwatch = cloudwatch
+        self._github = github
 
     def verify_incident(self, incident_id: str) -> Incident | None:
         """Run the verification loop for a single incident and persist the result."""
@@ -63,4 +65,14 @@ class VerificationService:
             summary=summary,
         )
         logger.info("Verification for %s: %s", incident_id, summary)
-        return self._store.apply_verification(incident_id, result)
+        updated = self._store.apply_verification(incident_id, result)
+
+        # Close the loop publicly: comment the measured outcome on the PR that
+        # proposed the fix, so the evidence lives with the change.
+        if updated is not None and self._github is not None and updated.pull_request:
+            self._github.comment_verification(
+                pr_number=updated.pull_request.number,
+                verification=result,
+                incident_id=incident_id,
+            )
+        return updated
