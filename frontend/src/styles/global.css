@@ -256,7 +256,11 @@ a:hover { text-decoration: underline; }
 
 .overview-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* minmax(0, 1fr) lets each column shrink below its content width; a plain
+     1fr defaults to min-width:auto, so the monospace signal rows and pre-
+     formatted diff blocks inside a card would push a column wider than its
+     share and shove the third one off-screen. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
   align-items: start;
 }
@@ -264,6 +268,9 @@ a:hover { text-decoration: underline; }
 
 .panel {
   background: transparent;
+  /* A grid item must be allowed to shrink so its overflow children (code
+     blocks) scroll internally instead of expanding the whole column. */
+  min-width: 0;
 }
 .panel__head {
   display: flex;
@@ -319,6 +326,7 @@ a:hover { text-decoration: underline; }
   border-radius: var(--radius);
   padding: 18px;
   margin-bottom: 14px;
+  min-width: 0;
   box-shadow: var(--shadow);
   transition: transform 0.18s var(--ease), border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
   animation: rise 0.35s var(--ease) both;
