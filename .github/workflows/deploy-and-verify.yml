@@ -139,4 +139,13 @@ jobs:
       - name: CDK deploy
         if: steps.gate.outputs.enabled == 'true'
         working-directory: infra
+        env:
+          # The Lambdas need GitHub credentials baked in, or AgentSentry loses the
+          # ability to open remediation pull requests. AGENTSENTRY_REQUIRE_GITHUB
+          # makes a missing token fail the deploy instead of silently shipping a
+          # downgraded stack. Names avoid the reserved GITHUB_ prefix.
+          AGENTSENTRY_GH_TOKEN: ${{ secrets.AGENTSENTRY_GH_TOKEN }}
+          AGENTSENTRY_GH_REPO: ${{ github.repository }}
+          AGENTSENTRY_GH_BASE_BRANCH: ${{ github.event.pull_request.base.ref || 'main' }}
+          AGENTSENTRY_REQUIRE_GITHUB: '1'
         run: cdk deploy --require-approval never

@@ -242,7 +242,8 @@ proposing the S3-offload pattern).
   that account had already reached its Amplify app limit.
 - The incident trigger is a deliberate load burst standing in for a traffic spike. Everything after
   it — alarm, detection, inspection, diagnosis, pull request, verification — is real and unscripted.
-- The remediation PR commits an incident report documenting the change rather than mutating the live
-  CDK stack, so merging is safe to demonstrate.
+- The remediation PR commits a real edit to `infra/agentsentry/stack.py` (the exact table's billing
+  mode) together with its incident report, in one commit. Nothing is applied to AWS until a human
+  merges and the deployment pipeline runs — see the architecture section for the merge/deploy split.
 
 *Built for the AWS Zero to Shipped hackathon with Kiro and the Agent Toolkit for AWS.*

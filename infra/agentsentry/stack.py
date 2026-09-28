@@ -247,6 +247,7 @@ def _bundling_options():
     import os
     import shutil
     import subprocess
+    import sys
     from pathlib import Path
 
     if (
@@ -267,9 +268,14 @@ def _bundling_options():
             # host's Windows wheels. Compiled packages like pydantic-core ship
             # platform-specific binaries; installing Windows ones breaks on
             # Lambda (Linux). --platform + --only-binary pulls the right wheels.
+            #
+            # sys.executable rather than "python", and no shell: on Linux
+            # ``shell=True`` with an argument list passes only the first element
+            # to ``sh -c``, so pip would never run and the bundle would ship
+            # without mangum/pydantic. That failure only appears at runtime.
             subprocess.run(
                 [
-                    "python",
+                    sys.executable,
                     "-m",
                     "pip",
                     "install",
@@ -288,7 +294,6 @@ def _bundling_options():
                     "--quiet",
                 ],
                 check=True,
-                shell=True,
             )
             # Copy source (code) alongside the installed deps.
             for item in src.iterdir():
@@ -318,27 +323,61 @@ def _bundling_options():
 
 
 def _github_env() -> dict:
-    """Read GitHub settings from backend/config/.env (never committed).
+    """Resolve the GitHub settings baked into the Lambda environment.
 
-    Returns an empty dict when not configured, so the pipeline simply records the
-    proposed fix instead of opening a PR.
+    Two sources, environment variables taking precedence:
+
+    1. Process environment variables — used by CI, which has no ``.env`` file.
+       GitHub Actions reserves the ``GITHUB_`` prefix for both secrets and
+       variables, so CI supplies ``AGENTSENTRY_GH_*`` names; the plain
+       ``GITHUB_*`` names still work for local shells.
+    2. ``backend/config/.env`` — used by local deploys; never committed.
+
+    Returning an empty dict is correct for a contributor who has not configured
+    GitHub: the pipeline records the proposed fix instead of opening a PR. It is
+    *not* correct for a deploy that maintains the live stack, because CDK would
+    then drop ``GITHUB_TOKEN`` from the running Lambdas and silently disable
+    pull-request creation. Set ``AGENTSENTRY_REQUIRE_GITHUB=1`` on those deploys
+    to turn that silent downgrade into a hard failure.
     """
-    env_file = Path(BACKEND_DIR) / "config" / ".env"
-    if not env_file.exists():
-        return {}
+    import os
 
     values: dict[str, str] = {}
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        values[key.strip()] = val.strip()
+    env_file = Path(BACKEND_DIR) / "config" / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            values[key.strip()] = val.strip()
+
+    # Environment variables win, so CI can supply these from repository secrets.
+    # The AGENTSENTRY_GH_* aliases exist because GitHub Actions refuses to set
+    # any secret or variable beginning with GITHUB_.
+    candidates = {
+        "GITHUB_TOKEN": ("AGENTSENTRY_GH_TOKEN", "GITHUB_TOKEN"),
+        "GITHUB_REPO": ("AGENTSENTRY_GH_REPO", "GITHUB_REPO"),
+        "GITHUB_BASE_BRANCH": ("AGENTSENTRY_GH_BASE_BRANCH", "GITHUB_BASE_BRANCH"),
+    }
+    for target, sources in candidates.items():
+        for source in sources:
+            if os.environ.get(source):
+                values[target] = os.environ[source].strip()
+                break
 
     token = values.get("GITHUB_TOKEN", "")
     repo = values.get("GITHUB_REPO", "")
     base = values.get("GITHUB_BASE_BRANCH", "main")
+
     if not token or not repo or "your-org" in repo:
+        if os.environ.get("AGENTSENTRY_REQUIRE_GITHUB") == "1":
+            raise ValueError(
+                "GITHUB_TOKEN and GITHUB_REPO are required for this deploy but were "
+                "found in neither the environment nor backend/config/.env. Refusing "
+                "to deploy Lambdas without GitHub configuration, which would "
+                "disable remediation pull requests."
+            )
         return {}
     return {"GITHUB_TOKEN": token, "GITHUB_REPO": repo, "GITHUB_BASE_BRANCH": base}
 
