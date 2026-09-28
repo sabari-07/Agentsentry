@@ -120,6 +120,14 @@ export function Dashboard() {
           </div>
         </div>
 
+        <a
+          className="nav__item"
+          href="#judges"
+          style={{ border: "1px solid var(--border)", justifyContent: "center", gap: 8 }}
+        >
+          Judges' 3-minute tour →
+        </a>
+
         <nav className="nav">
           {groups.map((g, gi) => (
             <div key={g}>

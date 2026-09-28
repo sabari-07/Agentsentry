@@ -5,8 +5,10 @@ Copy the sections below into your Builder Center project post.
 - **Category tag:** `#workplace-efficiency`
 - **Lane tag:** `#startups`
 - **Live app (Ship Gate):** http://agentsentry-dashboard-273354655941.s3-website-us-east-1.amazonaws.com
+- **Judges' 3-minute tour:** http://agentsentry-dashboard-273354655941.s3-website-us-east-1.amazonaws.com/#judges
 - **Repository:** https://github.com/sabari-07/Agentsentry
 - **Real remediation PR (agent-authored):** https://github.com/sabari-07/Agentsentry/pull/4
+- **The proof it can fail:** https://github.com/sabari-07/Agentsentry/pull/5 (read the two comments in order)
 
 ---
 
@@ -88,6 +90,8 @@ artifact in this project.
   writes** in one window.
 - **Read-only inspection only** — `DescribeTable` and `GetMetricStatistics`, recorded per incident and
   shown in the UI. Zero mutating calls.
+- **46 automated tests** (`pytest` in `backend/`), including regression tests that pin the CloudWatch
+  dimension set and assert the verification can return `FAILED`.
 - **Cost: $0.00.** The whole system runs inside the AWS Free Tier: DynamoDB at 1 RCU/1 WCU (free
   tier covers 25/25), three small Lambdas, one HTTP API, one CloudWatch alarm (limit 10), S3 static
   hosting, and **CloudTrail Event history only — no trail, no data events**. There is no model

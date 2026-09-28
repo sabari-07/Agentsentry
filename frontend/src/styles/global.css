@@ -472,3 +472,204 @@ a:hover { text-decoration: underline; }
 .skeleton { background: linear-gradient(90deg, var(--surface) 25%, var(--surface-2) 37%, var(--surface) 63%); background-size: 400% 100%; animation: shimmer 1.4s ease infinite; border-radius: 6px; }
 @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 .skeleton-card { height: 130px; border-radius: var(--radius); margin-bottom: 14px; }
+
+/* ============================================================
+   Judges' tour
+   ============================================================ */
+.judges {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 44px 28px 80px;
+}
+.judges__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 28px;
+  padding-bottom: 30px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.judges__eyebrow {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 14px;
+}
+.judges__title {
+  font-size: 38px;
+  line-height: 1.15;
+  font-weight: 750;
+  letter-spacing: -0.03em;
+  margin: 0;
+  background: var(--gemini);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.judges__lede {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-2);
+  margin: 18px 0 0;
+  max-width: 620px;
+}
+
+.judges__stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin: 28px 0 8px;
+}
+@media (max-width: 800px) {
+  .judges__stats { grid-template-columns: repeat(2, 1fr); }
+  .judges__head { flex-direction: column; }
+  .judges__title { font-size: 30px; }
+}
+.judges__stat {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+.judges__statValue {
+  font-size: 24px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+.judges__statLabel {
+  font-size: 11.5px;
+  color: var(--text-3);
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.judges__section { margin-top: 42px; }
+.judges__h2 {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin: 0 0 12px;
+  color: var(--text);
+}
+.judges__p {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text-2);
+  margin: 0 0 18px;
+}
+.judges__note {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-3);
+  background: var(--surface);
+  border-left: 3px solid var(--brand);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 14px 16px;
+  margin: 18px 0 0;
+}
+.judges__list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text-2);
+}
+.judges__list li + li { margin-top: 8px; }
+.judges code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: #101116;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+
+/* Steps */
+.steps { list-style: none; margin: 0; padding: 0; }
+.step {
+  display: flex;
+  gap: 15px;
+  padding: 15px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.step:last-child { border-bottom: 1px solid var(--border-soft); }
+.step__n {
+  flex-shrink: 0;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+.step__title {
+  font-size: 14.5px;
+  font-weight: 650;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.step__body {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+  margin-top: 5px;
+}
+
+/* Proof block */
+.proof {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.proof__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 15px;
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+.proof__row--fail {
+  background: var(--red-dim);
+  border: 1px solid rgba(255, 122, 138, 0.3);
+  color: var(--text-2);
+}
+.proof__row--pass {
+  background: var(--green-dim);
+  border: 1px solid rgba(87, 217, 163, 0.28);
+  color: var(--text-2);
+}
+.proof__badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  padding-top: 1px;
+}
+
+.judges__foot {
+  margin-top: 48px;
+  padding-top: 22px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.judges__foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
