@@ -1,4 +1,4 @@
-"""Inspect the most recent remediation PR to confirm its contents."""
+"""Inspect the most recent remediation PR and save its body for review."""
 from __future__ import annotations
 
 import sys
@@ -12,6 +12,19 @@ from config import get_settings  # noqa: E402
 
 API = "https://api.github.com"
 
+SECTIONS = [
+    "Incident summary",
+    "What went wrong",
+    "Evidence gathered",
+    "Why this matters",
+    "The fix in this pull request",
+    "Alternatives considered",
+    "Cost impact",
+    "How this will be verified",
+    "Rollback plan",
+    "Read-only audit trail",
+]
+
 
 def main() -> None:
     s = get_settings()
@@ -23,17 +36,22 @@ def main() -> None:
     with httpx.Client(timeout=20, headers=h) as c:
         prs = c.get(f"{API}/repos/{s.github_repo}/pulls", params={"state": "open"}).json()
         print(f"open PRs: {len(prs)}")
-        for pr in prs[:1]:
-            print(f"\n#{pr['number']} {pr['title']}")
-            print(f"  url:    {pr['html_url']}")
-            print(f"  branch: {pr['head']['ref']} -> {pr['base']['ref']}")
-            print(f"  state:  {pr['state']}, mergeable_state: {pr.get('mergeable_state')}")
-            files = c.get(f"{API}/repos/{s.github_repo}/pulls/{pr['number']}/files").json()
-            print(f"  files changed: {[f['filename'] for f in files]}")
-            body = pr.get("body") or ""
-            print("\n  --- PR body checks ---")
-            for token in ["Diagnosis", "cdk diff", "Cost delta", "Rollback plan", "read-only"]:
-                print(f"   contains '{token}':", token.lower() in body.lower())
+        if not prs:
+            return
+        pr = prs[0]
+        print(f"\n#{pr['number']} {pr['title']}")
+        print(f"  url:    {pr['html_url']}")
+        print(f"  branch: {pr['head']['ref']} -> {pr['base']['ref']}")
+        files = c.get(f"{API}/repos/{s.github_repo}/pulls/{pr['number']}/files").json()
+        print(f"  files:  {[f['filename'] for f in files]}")
+        body = pr.get("body") or ""
+        print(f"  body length: {len(body)} chars")
+        print("  sections present:")
+        for sec in SECTIONS:
+            print(f"    {sec}: {sec in body}")
+        out = Path("latest_pr_body.md")
+        out.write_text(body, encoding="utf-8")
+        print(f"\n  saved body to {out}")
 
 
 if __name__ == "__main__":

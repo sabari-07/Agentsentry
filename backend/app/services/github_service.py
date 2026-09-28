@@ -55,30 +55,129 @@ class GitHubService:
     # PR body
     # ------------------------------------------------------------------ #
     def build_pr_body(
-        self, diagnosis: str, cdk_diff: str, cost_delta: CostDelta, rollback: str
+        self,
+        diagnosis: str,
+        cdk_diff: str,
+        cost_delta: CostDelta,
+        rollback: str,
+        *,
+        incident=None,
+        facts: dict | None = None,
+        impact: str = "",
+        why_this_fix: str = "",
+        alternatives: str = "",
+        verification: str = "",
+        audit_calls: list | None = None,
     ) -> str:
-        """Compose a reviewable PR description with all supporting evidence."""
+        """Compose a detailed, reviewable incident report as the PR description."""
         delta = cost_delta.difference_usd
-        sign = "+" if delta >= 0 else ""
-        return (
+        # Format as -$0.57 / +$0.57 rather than $-0.57.
+        delta_str = f"{'+' if delta >= 0 else '-'}${abs(delta):.2f}/mo"
+        facts = facts or {}
+        audit_calls = audit_calls or []
+
+        parts: list[str] = []
+
+        parts.append(
             "## AgentSentry AI — automated remediation\n\n"
             "This pull request was opened automatically by **AgentSentry AI** after it detected a "
-            "live infrastructure incident, inspected the affected resource read-only, and derived "
-            "the fix from the observed data.\n\n"
-            f"### Diagnosis\n{diagnosis}\n\n"
-            "### Proposed change (`cdk diff`)\n"
-            f"```\n{cdk_diff}\n```\n\n"
-            "### Cost delta\n"
-            "| Before | After | Difference |\n"
-            "| --- | --- | --- |\n"
-            f"| ${cost_delta.before_monthly_usd:.2f}/mo | ${cost_delta.after_monthly_usd:.2f}/mo "
-            f"| {sign}${delta:.2f}/mo |\n\n"
-            "### Rollback plan\n"
-            f"{rollback}\n\n"
-            "---\n"
-            "_Read-only by construction, human-in-the-loop by design. The agent only inspected "
-            "AWS (Describe / Get / List) and proposed this change — a human must review and merge._"
+            "live infrastructure incident in AWS, inspected the affected resource **read-only**, "
+            "and derived the fix from the data it actually observed. No change has been applied — "
+            "this PR proposes the fix for human review."
         )
+
+        # --- Incident summary table ---
+        if incident is not None:
+            parts.append(
+                "### 1. Incident summary\n\n"
+                "| Field | Value |\n| --- | --- |\n"
+                f"| Incident ID | `{incident.id}` |\n"
+                f"| Resource | `{incident.resource_id}` |\n"
+                f"| Resource type | `{incident.resource_type}` |\n"
+                f"| Breaching metric | `{incident.metric_name}` |\n"
+                f"| Severity | **{incident.severity.value}** |\n"
+                f"| Detected at | {incident.detected_at.isoformat()} |\n"
+                f"| Detection path | CloudWatch alarm → EventBridge → incident Lambda |"
+            )
+
+        # --- What went wrong ---
+        parts.append(f"### 2. What went wrong\n\n{diagnosis}")
+
+        # --- Evidence gathered ---
+        if facts:
+            ev = ["### 3. Evidence gathered from the live account\n"]
+            ev.append("| Observation | Value |\n| --- | --- |")
+            if facts.get("billing_mode"):
+                ev.append(f"| Billing mode | `{facts['billing_mode']}` |")
+            if facts.get("rcu") is not None:
+                ev.append(f"| Provisioned read capacity (RCU) | {facts['rcu']} |")
+            if facts.get("wcu") is not None:
+                ev.append(f"| Provisioned write capacity (WCU) | {facts['wcu']} |")
+            if facts.get("throttled_15m") is not None:
+                ev.append(
+                    f"| Throttled `PutItem` requests (last 15 min) | **{facts['throttled_15m']:g}** |"
+                )
+            if facts.get("item_count") is not None:
+                ev.append(f"| Approx. item count | {facts['item_count']} |")
+            parts.append("\n".join(ev))
+
+        # --- Impact ---
+        if impact:
+            parts.append(f"### 4. Why this matters (impact)\n\n{impact}")
+
+        # --- The fix ---
+        fix = ["### 5. The fix in this pull request\n"]
+        if why_this_fix:
+            fix.append(why_this_fix + "\n")
+        fix.append("Proposed infrastructure change (`cdk diff`):\n")
+        fix.append(f"```\n{cdk_diff}\n```")
+        parts.append("\n".join(fix))
+
+        # --- Alternatives considered ---
+        if alternatives:
+            parts.append(f"### 6. Alternatives considered\n\n{alternatives}")
+
+        # --- Cost ---
+        parts.append(
+            "### 7. Cost impact\n\n"
+            "| Before | After | Difference |\n| --- | --- | --- |\n"
+            f"| ${cost_delta.before_monthly_usd:.2f}/mo | ${cost_delta.after_monthly_usd:.2f}/mo "
+            f"| {delta_str} |\n\n"
+            "_Estimates based on the observed configuration and current AWS on-demand pricing for "
+            "this region. Actual cost varies with traffic._"
+        )
+
+        # --- How to verify ---
+        if verification:
+            parts.append(f"### 8. How this will be verified after merge\n\n{verification}")
+
+        # --- Rollback ---
+        parts.append(f"### 9. Rollback plan\n\n{rollback}")
+
+        # --- Audit trail ---
+        if audit_calls:
+            rows = ["### 10. Read-only audit trail\n"]
+            rows.append(
+                "Every AWS API call the agent made while investigating this incident:\n"
+            )
+            rows.append("| API call | Service | Read-only |\n| --- | --- | --- |")
+            for c in audit_calls:
+                svc = c.aws_service.replace(".amazonaws.com", "")
+                rows.append(f"| `{c.event_name}` | {svc} | {'✅' if c.read_only else '❌'} |")
+            rows.append(
+                "\nThese are management events and are independently verifiable in "
+                "**CloudTrail → Event history**."
+            )
+            parts.append("\n".join(rows))
+
+        parts.append(
+            "---\n"
+            "**Safety model:** read-only by construction, human-in-the-loop by design. The agent "
+            "only issued `Describe*` / `Get*` / `List*` calls and never mutated infrastructure. "
+            "Merging this PR is a human decision; the change is applied only after merge."
+        )
+
+        return "\n\n".join(parts)
 
     # ------------------------------------------------------------------ #
     # Full PR flow: branch -> commit -> PR
